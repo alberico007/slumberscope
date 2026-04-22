@@ -2,7 +2,6 @@
 //  SleepControlWidget.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import AppIntents
@@ -12,9 +11,9 @@ import WidgetKit
 // MARK: - Control Widget Intent
 
 struct ControlToggleSleepIntent: AppIntent {
-    static var title: LocalizedStringResource = "Toggle Sleep Tracking"
-    static var description: IntentDescription = "Start or stop sleep tracking from Control Center."
-    static var openAppWhenRun: Bool = true
+    static let title: LocalizedStringResource = "Toggle Sleep Tracking"
+    static let description: IntentDescription = "Start or stop sleep tracking from Control Center."
+    static let openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         let isTracking = UserDefaults.standard.bool(forKey: "isCurrentlyTracking")
@@ -50,9 +49,9 @@ struct SleepControlWidget: ControlWidget {
 // MARK: - Quick Start Widget
 
 struct QuickStartSleepIntent: AppIntent {
-    static var title: LocalizedStringResource = "Quick Start Sleep"
-    static var description: IntentDescription = "Quickly start a sleep tracking session."
-    static var openAppWhenRun: Bool = true
+    static let title: LocalizedStringResource = "Quick Start Sleep"
+    static let description: IntentDescription = "Quickly start a sleep tracking session."
+    static let openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         await MainActor.run {

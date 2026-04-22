@@ -8,6 +8,7 @@ import FirebaseFirestore
 import Foundation
 
 @Observable
+@MainActor
 final class CloudSyncService {
 
     // MARK: - Observable State

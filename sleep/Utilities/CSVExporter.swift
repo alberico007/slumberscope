@@ -2,7 +2,6 @@
 //  CSVExporter.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/16/26.
 //
 
 import SwiftUI

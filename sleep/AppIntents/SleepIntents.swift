@@ -2,7 +2,6 @@
 //  SleepIntents.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import AppIntents
@@ -18,15 +17,17 @@ extension Notification.Name {
     static let watchMovementData = Notification.Name("com.slumberscope.watchMovementData")
     static let watchSnoringCountUpdate = Notification.Name("com.slumberscope.watchSnoringCountUpdate")
     static let watchReachabilityChanged = Notification.Name("com.slumberscope.watchReachabilityChanged")
+    static let watchReadyToReceive = Notification.Name("com.slumberscope.watchReadyToReceive")
+    static let watchClassifierEvent = Notification.Name("com.slumberscope.watchClassifierEvent")
 }
 
 // MARK: - StartSleepTrackingIntent
 
 struct StartSleepTrackingIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Start Sleep Tracking"
-    static var description: IntentDescription = "Starts a new sleep tracking session in Slumberscope."
-    static var openAppWhenRun: Bool = true
+    static let title: LocalizedStringResource = "Start Sleep Tracking"
+    static let description: IntentDescription = "Starts a new sleep tracking session in Slumberscope."
+    static let openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         await MainActor.run {
@@ -40,9 +41,9 @@ struct StartSleepTrackingIntent: AppIntent {
 
 struct StopSleepTrackingIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Stop Sleep Tracking"
-    static var description: IntentDescription = "Stops the current sleep tracking session."
-    static var openAppWhenRun: Bool = true
+    static let title: LocalizedStringResource = "Stop Sleep Tracking"
+    static let description: IntentDescription = "Stops the current sleep tracking session."
+    static let openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         await MainActor.run {
@@ -56,8 +57,8 @@ struct StopSleepTrackingIntent: AppIntent {
 
 struct GetLastSleepScoreIntent: AppIntent {
 
-    static var title: LocalizedStringResource = "Get Last Sleep Score"
-    static var description: IntentDescription = "Returns your most recent sleep score."
+    static let title: LocalizedStringResource = "Get Last Sleep Score"
+    static let description: IntentDescription = "Returns your most recent sleep score."
 
     func perform() async throws -> some IntentResult & ReturnsValue<Int> {
         // Access the last session score via UserDefaults cache or return 0
@@ -70,9 +71,9 @@ struct GetLastSleepScoreIntent: AppIntent {
 // MARK: - StartTrackingWithSoundsIntent
 
 struct StartTrackingWithSoundsIntent: AppIntent {
-    static var title: LocalizedStringResource = "Start Tracking with Rain Sounds"
-    static var description: IntentDescription = "Starts sleep tracking and plays rain sounds."
-    static var openAppWhenRun: Bool = true
+    static let title: LocalizedStringResource = "Start Tracking with Rain Sounds"
+    static let description: IntentDescription = "Starts sleep tracking and plays rain sounds."
+    static let openAppWhenRun: Bool = true
 
     func perform() async throws -> some IntentResult {
         await MainActor.run {
@@ -86,8 +87,8 @@ struct StartTrackingWithSoundsIntent: AppIntent {
 // MARK: - GetSleepSummaryIntent
 
 struct GetSleepSummaryIntent: AppIntent {
-    static var title: LocalizedStringResource = "Get Sleep Summary"
-    static var description: IntentDescription = "Returns a summary of your recent sleep."
+    static let title: LocalizedStringResource = "Get Sleep Summary"
+    static let description: IntentDescription = "Returns a summary of your recent sleep."
 
     func perform() async throws -> some IntentResult & ReturnsValue<String> {
         let defaults = UserDefaults.standard

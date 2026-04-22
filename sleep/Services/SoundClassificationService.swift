@@ -11,10 +11,10 @@
 //  which ships with iOS 15+ and covers 300+ sound labels.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import os
-import SoundAnalysis
+@preconcurrency import SoundAnalysis
 
 // MARK: - Classified Event
 
@@ -31,6 +31,7 @@ struct ClassifiedSoundEvent: Sendable {
 // MARK: - SoundClassificationService
 
 @Observable
+@MainActor
 final class SoundClassificationService: NSObject {
 
     // MARK: - Observable state
@@ -84,6 +85,46 @@ final class SoundClassificationService: NSObject {
     /// (e.g. "blow" at 0.6 means the user blew into the mic, not snored).
     static let environmentalVetoConfidence: Double = 0.4
 
+    // MARK: - Classifier-driven event detection
+    //
+    // In addition to VETOING amplitude-based events, the classifier can now
+    // directly COMMIT events of its own. Barks, meows, and voice bursts are
+    // too brief or too high-frequency to pass the amplitude detector's
+    // band-ratio / duration gate. When the classifier sees any of the labels
+    // below at high confidence for a sustained window, it fires onTargetEvent
+    // so AudioService can commit a SnoringEvent directly.
+
+    /// Labels the classifier proactively emits as events (not just vetoes).
+    /// Use Apple's SNClassifierIdentifier.version1 format (lowercase+underscore).
+    static let targetEventLabels: Set<String> = [
+        "dog", "bark",
+        "cat", "meow",
+        "speech", "whispering", "laughter",
+        "snoring",
+        "cough", "sneeze",
+    ]
+
+    /// Minimum confidence (peak across sustain window) to trigger an event.
+    static let targetConfidenceThreshold: Double = 0.6
+
+    /// Minimum time a target label must stay above threshold before firing.
+    static let targetSustainSeconds: TimeInterval = 0.5
+
+    /// Per-label cooldown so a 10-second bark doesn't produce 20 duplicate
+    /// events. First event fires, then subsequent target hits on the same
+    /// label are suppressed for this long.
+    static let targetCooldownSeconds: TimeInterval = 3.0
+
+    /// Fired when a target label has been above threshold for at least
+    /// targetSustainSeconds and is outside its per-label cooldown.
+    /// AudioService subscribes to commit a SnoringEvent directly.
+    var onTargetEvent: ((_ label: String, _ confidence: Double) -> Void)?
+
+    // Internal tracking: when each label first crossed threshold (reset when
+    // it drops below), and when we last emitted for it.
+    private var targetSustainStart: [String: Date] = [:]
+    private var targetLastEmitted: [String: Date] = [:]
+
     // MARK: - Private
 
     private let analysisQueue = DispatchQueue(label: "sleep.sound-classification", qos: .userInitiated)
@@ -124,9 +165,17 @@ final class SoundClassificationService: NSObject {
     /// Feed a buffer from the AudioService tap. Must match the format used at
     /// attach time.
     func analyze(_ buffer: AVAudioPCMBuffer, at time: AVAudioTime) {
+        analyzeCopy(buffer, sampleTime: time.sampleTime)
+    }
+
+    /// Analyze a copied buffer with sample time. Buffer is treated as Sendable
+    /// because the caller hands ownership to us — they don't read from it again.
+    func analyzeCopy(_ buffer: AVAudioPCMBuffer, sampleTime: AVAudioFramePosition) {
         guard let analyzer = streamAnalyzer else { return }
+        nonisolated(unsafe) let buf = buffer
+        nonisolated(unsafe) let localAnalyzer = analyzer
         analysisQueue.async {
-            analyzer.analyze(buffer, atAudioFramePosition: time.sampleTime)
+            localAnalyzer.analyze(buf, atAudioFramePosition: sampleTime)
         }
     }
 
@@ -136,6 +185,8 @@ final class SoundClassificationService: NSObject {
         streamAnalyzer = nil
         request = nil
         recentEvents.removeAll()
+        targetSustainStart.removeAll()
+        targetLastEmitted.removeAll()
         AppLogger.audio.info("SoundClassification: detached")
     }
 
@@ -227,6 +278,52 @@ final class SoundClassificationService: NSObject {
             self.recentEvents.append(event)
             let cutoff = Date().addingTimeInterval(-self.rollingWindowSeconds)
             self.recentEvents.removeAll { $0.timestamp < cutoff }
+            self.checkTargetEvents(in: event)
+        }
+    }
+
+    /// Look for target labels in this classification frame. Emits onTargetEvent
+    /// when a label has been above threshold for at least targetSustainSeconds
+    /// AND is outside its per-label cooldown. Runs on @MainActor.
+    @MainActor
+    private func checkTargetEvents(in event: ClassifiedSoundEvent) {
+        let now = event.timestamp
+        // Map label → confidence for just this frame, restricted to targets.
+        var currentTargets: [String: Double] = [:]
+        for entry in event.allLabels where Self.targetEventLabels.contains(entry.label) {
+            currentTargets[entry.label] = entry.confidence
+        }
+
+        // Update sustain timers. A label is "sustaining" when its confidence
+        // stays above threshold across consecutive frames.
+        for label in Self.targetEventLabels {
+            let conf = currentTargets[label] ?? 0
+            if conf >= Self.targetConfidenceThreshold {
+                if targetSustainStart[label] == nil {
+                    targetSustainStart[label] = now
+                }
+            } else {
+                targetSustainStart[label] = nil
+            }
+        }
+
+        // Fire the first target that has sustained long enough and isn't in
+        // cooldown. Only fire one per frame — a single event is clearer than
+        // simultaneous duplicates for overlapping labels like "dog" + "bark".
+        for label in Self.targetEventLabels {
+            guard let sustainStart = targetSustainStart[label] else { continue }
+            guard now.timeIntervalSince(sustainStart) >= Self.targetSustainSeconds else { continue }
+            if let last = targetLastEmitted[label],
+               now.timeIntervalSince(last) < Self.targetCooldownSeconds {
+                continue
+            }
+            let conf = currentTargets[label] ?? 0
+            targetLastEmitted[label] = now
+            // Reset sustain so the next event needs another fresh sustain.
+            targetSustainStart[label] = nil
+            AppLogger.audio.info("🎯 Classifier target fired — \(label) conf=\(String(format: "%.2f", conf))")
+            onTargetEvent?(label, conf)
+            break
         }
     }
 }

@@ -2,7 +2,6 @@
 //  MorningReviewView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import os
@@ -167,35 +166,57 @@ struct MorningReviewView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
 
-                            ForEach(trackingService.audioService.snoringEvents) { event in
-                                let eventType = AudioEventType.classify(
-                                    amplitude: event.averageAmplitude,
-                                    duration: event.duration
-                                )
-                                HStack(alignment: .center, spacing: 8) {
-                                    AudioPlayerView(event: event, eventType: eventType)
-                                    // Classification label if classifier
-                                    // tagged it something other than a
-                                    // high-confidence snore.
-                                    if !event.classification.isEmpty,
-                                       event.classification != "snoring" {
-                                        Text(event.classification.replacingOccurrences(of: "_", with: " "))
-                                            .font(.caption2)
-                                            .padding(.horizontal, 6).padding(.vertical, 2)
-                                            .background(Color.orange.opacity(0.15))
-                                            .foregroundStyle(.orange)
-                                            .clipShape(Capsule())
-                                    }
-                                    Button {
-                                        removeSnoreEvent(id: event.id)
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
+                            ForEach(Array(trackingService.audioService.snoringEvents
+                                            .groupedByClassification().enumerated()),
+                                    id: \.offset) { _, group in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: group.bucket.icon)
+                                            .font(.subheadline)
+                                            .foregroundStyle(group.bucket.tint)
+                                        Text(group.bucket.displayName)
+                                            .font(.subheadline).fontWeight(.semibold)
+                                        Text("\(group.events.count)")
+                                            .font(.caption)
                                             .foregroundStyle(.secondary)
+                                        Spacer()
                                     }
-                                    .buttonStyle(.plain)
-                                    .accessibilityLabel("Remove as false positive")
+                                    .padding(.top, 2)
+
+                                    ForEach(group.events) { event in
+                                        let eventType = AudioEventType.classify(
+                                            amplitude: event.averageAmplitude,
+                                            duration: event.duration
+                                        )
+                                        HStack(alignment: .center, spacing: 8) {
+                                            AudioPlayerView(event: event, eventType: eventType)
+                                            // Surface the precise classifier
+                                            // label (e.g. Bark, Meow) even
+                                            // inside its bucket so the user
+                                            // knows which specific sound it
+                                            // was. Skip plain "snoring" since
+                                            // that's the section header.
+                                            if !event.classification.isEmpty,
+                                               event.classification.lowercased() != "snoring" {
+                                                Text(event.classification.replacingOccurrences(of: "_", with: " "))
+                                                    .font(.caption2)
+                                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                                    .background(group.bucket.tint.opacity(0.15))
+                                                    .foregroundStyle(group.bucket.tint)
+                                                    .clipShape(Capsule())
+                                            }
+                                            Button {
+                                                removeSnoreEvent(id: event.id)
+                                            } label: {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityLabel("Remove as false positive")
+                                        }
+                                        Divider().opacity(0.3)
+                                    }
                                 }
-                                Divider().opacity(0.3)
                             }
                         }
                     }
@@ -306,21 +327,6 @@ struct MorningReviewView: View {
                     }
                 }
 
-                // Share button
-                if trackingService.phase == .completing {
-                    Button {
-                        showingShareSheet = true
-                    } label: {
-                        Label("Share Report", systemImage: "square.and.arrow.up")
-                            .font(.subheadline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(.plain)
-                }
-
                 // Share an image card — the viral-growth surface. Rendered
                 // on the fly from the current session + AI summary.
                 if let start = trackingService.startTime {
@@ -345,12 +351,6 @@ struct MorningReviewView: View {
                 Spacer(minLength: 40)
             }
             .padding(.horizontal)
-        }
-        .sheet(isPresented: $showingShareSheet) {
-            if let start = trackingService.startTime {
-                let summary = buildShareText(startTime: start)
-                ShareSheet(text: summary)
-            }
         }
         .sheet(item: $explainer) { req in
             MetricExplainerSheet(

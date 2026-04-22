@@ -12,9 +12,30 @@ struct SummaryView: View {
     let summaryData: SleepSummaryData
 
     private var durationFormatted: String {
-        let h = Int(summaryData.duration) / 3600
-        let m = (Int(summaryData.duration) % 3600) / 60
-        return "\(h)h \(m)m"
+        let total = Int(summaryData.duration.rounded())
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m \(s)s" }
+        return "\(s)s"
+    }
+
+    /// Grouped event counts (Snoring / Dogs / Cats / Voice / Other). Falls
+    /// back to the phone-provided snoringCount if no event breakdown came
+    /// through (older iPhone build).
+    private var bucketedEvents: [(bucket: WatchEventBucket, count: Int)] {
+        var counts: [WatchEventBucket: Int] = [:]
+        for e in summaryData.events {
+            counts[WatchEventBucket.classify(e.label), default: 0] += 1
+        }
+        if counts.isEmpty && summaryData.snoringCount > 0 {
+            counts[.snoring] = summaryData.snoringCount
+        }
+        return WatchEventBucket.allCases.compactMap { b in
+            guard let c = counts[b], c > 0 else { return nil }
+            return (b, c)
+        }
     }
 
     private var scoreColor: Color {
@@ -91,37 +112,50 @@ struct SummaryView: View {
                     .padding(.horizontal, 4)
                 }
 
-                // Heart Rate + Snoring stats
-                HStack(spacing: 12) {
-                    if summaryData.hrAvg > 0 {
-                        VStack(spacing: 2) {
-                            HStack(spacing: 2) {
-                                Image(systemName: "heart.fill")
-                                    .font(.system(size: 8))
-                                    .foregroundStyle(.red)
-                                Text("\(Int(summaryData.hrAvg))")
-                                    .font(.system(.caption, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(.white)
-                            }
-                            Text("\(Int(summaryData.hrMin))-\(Int(summaryData.hrMax))")
-                                .font(.system(size: 9, design: .rounded))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
+                // Heart Rate
+                if summaryData.hrAvg > 0 {
                     VStack(spacing: 2) {
                         HStack(spacing: 2) {
-                            Image(systemName: "waveform")
+                            Image(systemName: "heart.fill")
                                 .font(.system(size: 8))
-                                .foregroundStyle(.orange)
-                            Text(summaryData.snoringCount > 0 ? "\(summaryData.snoringCount)" : "0")
+                                .foregroundStyle(.red)
+                            Text("\(Int(summaryData.hrAvg)) bpm")
                                 .font(.system(.caption, design: .rounded, weight: .semibold))
                                 .foregroundStyle(.white)
                         }
-                        Text("Snoring")
+                        Text("\(Int(summaryData.hrMin))-\(Int(summaryData.hrMax))")
                             .font(.system(size: 9, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                // Classified sounds by category (Snoring / Dogs / Cats / Voice)
+                if !bucketedEvents.isEmpty {
+                    VStack(spacing: 3) {
+                        HStack {
+                            Text("Sounds")
+                                .font(.system(.caption2, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        ForEach(bucketedEvents, id: \.bucket) { entry in
+                            HStack(spacing: 6) {
+                                Image(systemName: entry.bucket.icon)
+                                    .font(.caption2)
+                                    .foregroundStyle(entry.bucket.tint)
+                                    .frame(width: 14)
+                                Text(entry.bucket.displayName)
+                                    .font(.system(.caption2, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                Spacer()
+                                Text("\(entry.count)")
+                                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(entry.bucket.tint)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 4)
                 }
 
                 // Movement Chart

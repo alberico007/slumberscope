@@ -2,10 +2,9 @@
 //  SoundService.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 import os
 import SwiftData
@@ -21,6 +20,7 @@ struct SoundMixerSlot: Identifiable {
 // MARK: - SoundService
 
 @Observable
+@MainActor
 final class SoundService {
 
     // MARK: - Observable State
@@ -273,15 +273,17 @@ final class SoundService {
         let steps = 20
         let stepDuration = fadeDuration / Double(steps)
 
+        final class FadeStep: @unchecked Sendable { var value = 0 }
+
         for player in players.values {
             let startVolume = player.volume
-            var step = 0
+            let counter = FadeStep()
 
-            Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
-                step += 1
-                let fraction = Float(step) / Float(steps)
+            Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { timer in
+                counter.value += 1
+                let fraction = Float(counter.value) / Float(steps)
                 player.volume = startVolume * (1 - fraction)
-                if step >= steps {
+                if counter.value >= steps {
                     timer.invalidate()
                     Task { @MainActor [weak self] in
                         self?.stop()
@@ -297,7 +299,7 @@ final class SoundService {
 // AVSpeechSynthesizerDelegate must be NSObject-backed; SoundService is a
 // pure Swift @Observable class, so we use a small NSObject proxy that
 // forwards the finish + cancel events back via a closure.
-private final class SpeechSynthesizerDelegateProxy: NSObject, AVSpeechSynthesizerDelegate {
+private final class SpeechSynthesizerDelegateProxy: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     var onFinish: (() -> Void)?
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

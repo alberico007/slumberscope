@@ -18,6 +18,7 @@ struct RecoveryState: Codable, Sendable {
 }
 
 @Observable
+@MainActor
 final class CrashRecoveryService {
 
     // MARK: - Observable State

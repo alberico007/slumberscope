@@ -2,25 +2,29 @@
 //  FormatHelpers.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/16/26.
 //
 
 import Foundation
 
 enum FormatHelpers {
 
-    /// Formats a duration as "7h 32m"
+    /// Formats a duration with seconds when short:
+    ///   ≥ 1h → "7h 32m"
+    ///   ≥ 1m → "3m 12s"
+    ///   < 1m → "14s"
+    /// Most classified sound events are < 1 minute, so "0m" was useless.
     static func duration(_ interval: TimeInterval) -> String {
-        let totalMinutes = Int(interval) / 60
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
+        let total = Int(interval.rounded())
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
 
-        if hours > 0 && minutes > 0 {
+        if hours > 0 {
             return "\(hours)h \(minutes)m"
-        } else if hours > 0 {
-            return "\(hours)h 0m"
+        } else if minutes > 0 {
+            return "\(minutes)m \(seconds)s"
         } else {
-            return "\(minutes)m"
+            return "\(seconds)s"
         }
     }
 

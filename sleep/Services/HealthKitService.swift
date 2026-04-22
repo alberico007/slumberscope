@@ -55,6 +55,7 @@ struct HeartRateStats {
 // MARK: - HealthKitService
 
 @Observable
+@MainActor
 final class HealthKitService {
 
     // MARK: - Observable State

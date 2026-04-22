@@ -7,6 +7,7 @@ import Foundation
 import HealthKit
 import os
 
+@MainActor
 final class HeartRateService: NSObject, ObservableObject {
 
     @Published var currentBPM: Double?
@@ -73,15 +74,17 @@ final class HeartRateService: NSObject, ObservableObject {
     func stopMonitoring() {
         WatchLogger.heartRate.info("Stopping HR monitoring")
         workoutSession?.end()
-        builder?.endCollection(withEnd: Date()) { [weak self] _, error in
+        builder?.endCollection(withEnd: Date()) { _, error in
             if let error = error {
                 WatchLogger.heartRate.error("Failed to end workout collection: \(error.localizedDescription)")
             }
-            self?.builder?.finishWorkout { _, error in
-                if let error = error {
-                    WatchLogger.heartRate.error("Failed to finish workout: \(error.localizedDescription)")
-                } else {
+            Task { @MainActor [weak self] in
+                guard let builder = self?.builder else { return }
+                do {
+                    _ = try await builder.finishWorkout()
                     WatchLogger.heartRate.info("Workout finished successfully")
+                } catch {
+                    WatchLogger.heartRate.error("Failed to finish workout: \(error.localizedDescription)")
                 }
             }
         }
@@ -94,14 +97,14 @@ final class HeartRateService: NSObject, ObservableObject {
 // MARK: - HKWorkoutSessionDelegate
 
 extension HeartRateService: HKWorkoutSessionDelegate {
-    func workoutSession(_ workoutSession: HKWorkoutSession,
+    nonisolated func workoutSession(_ workoutSession: HKWorkoutSession,
                         didChangeTo toState: HKWorkoutSessionState,
                         from fromState: HKWorkoutSessionState,
                         date: Date) {
         WatchLogger.heartRate.info("Workout session state: \(fromState.rawValue) → \(toState.rawValue)")
     }
 
-    func workoutSession(_ workoutSession: HKWorkoutSession,
+    nonisolated func workoutSession(_ workoutSession: HKWorkoutSession,
                         didFailWithError error: Error) {
         WatchLogger.heartRate.error("Workout session failed: \(error.localizedDescription)")
     }
@@ -111,15 +114,16 @@ extension HeartRateService: HKWorkoutSessionDelegate {
 
 extension HeartRateService: HKLiveWorkoutBuilderDelegate {
 
-    func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
+    nonisolated func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
 
-    func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
+    nonisolated func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
                         didCollectDataOf collectedTypes: Set<HKSampleType>) {
         guard collectedTypes.contains(HKQuantityType(.heartRate)),
               let stats = workoutBuilder.statistics(for: HKQuantityType(.heartRate)),
               let recent = stats.mostRecentQuantity() else { return }
         let bpm = recent.doubleValue(for: HKUnit(from: "count/min"))
-        DispatchQueue.main.async {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             self.currentBPM = bpm
             self.onHeartRateSample?(bpm)
             WatchLogger.heartRate.debug("HR sample: \(Int(bpm)) BPM")

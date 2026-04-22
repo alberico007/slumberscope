@@ -1,0 +1,16 @@
+{$SNORING_FQDN} {
+    encode gzip
+    reverse_proxy 127.0.0.1:8000 {
+        transport http {
+            read_timeout 30s
+        }
+    }
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+        format json
+        # Access log keeps method/path/status — no request body, no audio.
+    }
+}

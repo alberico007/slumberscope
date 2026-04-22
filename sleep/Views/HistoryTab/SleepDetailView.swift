@@ -2,7 +2,6 @@
 //  SleepDetailView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import SwiftUI
@@ -87,27 +86,56 @@ struct SleepDetailView: View {
                     }
                 }
 
-                // Snoring Events
+                // Audio Events — grouped by classification bucket so dogs,
+                // meows, voices, and "other" noises each get their own
+                // section alongside snoring. Each event has a tap-to-play
+                // control for reviewing the captured clip.
                 if !session.snoringEvents.isEmpty {
                     GlassCard {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Snoring Events")
-                                .font(.headline)
-                            ForEach(session.snoringEvents) { event in
-                                HStack {
-                                    Image(systemName: "zzz")
-                                        .foregroundStyle(.purple)
-                                    VStack(alignment: .leading) {
-                                        Text(FormatHelpers.timeOfDay(event.startTime))
+                            HStack {
+                                Label("Audio Events", systemImage: "waveform")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(session.snoringEvents.count)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(Array(session.snoringEvents.groupedByClassification().enumerated()),
+                                    id: \.offset) { _, group in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: group.bucket.icon)
                                             .font(.subheadline)
-                                        Text("Duration: \(FormatHelpers.duration(event.duration))")
+                                            .foregroundStyle(group.bucket.tint)
+                                        Text(group.bucket.displayName)
+                                            .font(.subheadline).fontWeight(.semibold)
+                                        Text("\(group.events.count)")
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
+                                        Spacer()
                                     }
-                                    Spacer()
-                                    Text(String(format: "%.2f", event.averageAmplitude))
-                                        .font(.subheadline.monospaced())
-                                        .foregroundStyle(.secondary)
+                                    .padding(.top, 2)
+
+                                    ForEach(group.events) { event in
+                                        let eventType = AudioEventType.classify(
+                                            amplitude: event.averageAmplitude,
+                                            duration: event.duration
+                                        )
+                                        HStack(alignment: .center, spacing: 8) {
+                                            AudioPlayerView(event: event, eventType: eventType)
+                                            if !event.classification.isEmpty,
+                                               event.classification.lowercased() != "snoring" {
+                                                Text(event.classification.replacingOccurrences(of: "_", with: " "))
+                                                    .font(.caption2)
+                                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                                    .background(group.bucket.tint.opacity(0.15))
+                                                    .foregroundStyle(group.bucket.tint)
+                                                    .clipShape(Capsule())
+                                            }
+                                        }
+                                        Divider().opacity(0.3)
+                                    }
                                 }
                             }
                         }

@@ -17,6 +17,7 @@ enum BatteryWarningLevel: Sendable {
 }
 
 @Observable
+@MainActor
 final class BatteryService {
 
     // MARK: - Observable State

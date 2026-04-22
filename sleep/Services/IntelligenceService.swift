@@ -12,6 +12,7 @@ import FoundationModels
 #endif
 
 @Observable
+@MainActor
 final class IntelligenceService {
 
     // MARK: - Observable State
@@ -607,34 +608,6 @@ final class IntelligenceService {
             return "30-day avg overnight HR: \(Int(avg)) bpm."
         }
         return ""
-    }
-
-    // MARK: - Smart Alarm Rationale
-
-    func generateAlarmRationale(stage: String, minutesEarlyVsLatest: Int) async -> String? {
-        #if !targetEnvironment(simulator)
-        if #available(iOS 26, *) {
-            #if canImport(FoundationModels)
-            do {
-                let instructions = Instructions("""
-                You write a 1-sentence friendly note explaining why a smart alarm fired when it did. \
-                Reference the detected sleep stage and how many minutes earlier than the latest alarm it was. \
-                Warm, factual, under 20 words.
-                """)
-                let session = LanguageModelSession(instructions: instructions)
-                let response = try await session.respond(to: "Stage detected: \(stage). Woke user \(minutesEarlyVsLatest) min before latest alarm.")
-                return response.content
-            } catch {
-                AppLogger.intelligence.error("Alarm rationale failed: \(error.localizedDescription)")
-            }
-            #endif
-        }
-        #endif
-
-        if minutesEarlyVsLatest <= 0 {
-            return "Woke you at your latest alarm — you hadn't hit a light stage yet."
-        }
-        return "Woke you \(minutesEarlyVsLatest) min early during a \(stage) stage for an easier wake-up."
     }
 
     // MARK: - Fallback Helpers

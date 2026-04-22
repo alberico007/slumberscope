@@ -2,7 +2,6 @@
 //  TonightView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import os
@@ -14,8 +13,6 @@ struct TonightView: View {
 
     @Environment(SleepTrackingService.self) private var trackingService
     @Environment(SleepSettings.self) private var settings
-
-    @State private var showingAlarmSheet = false
 
     var body: some View {
         NavigationStack {
@@ -38,20 +35,6 @@ struct TonightView: View {
                 }
             }
             .navigationTitle("Track")
-            .toolbar {
-                if trackingService.phase == .idle {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            showingAlarmSheet = true
-                        } label: {
-                            Image(systemName: "alarm")
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $showingAlarmSheet) {
-                SmartAlarmSheet()
-            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .startTrackingIntent)) { _ in
             AppLogger.ui.info("Received startTrackingIntent — phase: \(String(describing: trackingService.phase))")

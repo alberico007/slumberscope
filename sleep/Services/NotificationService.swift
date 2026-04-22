@@ -2,7 +2,6 @@
 //  NotificationService.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import Foundation
@@ -10,6 +9,7 @@ import os
 import UserNotifications
 
 @Observable
+@MainActor
 final class NotificationService: NSObject {
 
     // MARK: - Observable State
@@ -218,25 +218,6 @@ final class NotificationService: NSObject {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
-    // MARK: - Alarm Notification
-
-    func sendAlarmNotification() {
-        let content = UNMutableNotificationContent()
-        content.title = "Smart Alarm"
-        content.body = "Good morning! We detected light sleep -- it's the optimal time to wake up."
-        content.sound = .default
-        content.interruptionLevel = .timeSensitive
-        content.categoryIdentifier = "SMART_ALARM"
-
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: "com.sleep.smartAlarm.\(UUID().uuidString)", content: content, trigger: trigger)
-
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                AppLogger.notification.error("Failed to send alarm notification: \(error.localizedDescription)")
-            }
-        }
-    }
 }
 
 // MARK: - UNUserNotificationCenterDelegate

@@ -2,7 +2,6 @@
 //  StoreKitService.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import Foundation
@@ -35,6 +34,7 @@ enum StoreKitError: LocalizedError {
 }
 
 @Observable
+@MainActor
 final class StoreKitService {
 
     // MARK: - Product IDs
@@ -59,7 +59,8 @@ final class StoreKitService {
 
     // MARK: - Private
 
-    private var transactionListener: Task<Void, Never>?
+    @ObservationIgnored
+    private nonisolated(unsafe) var transactionListener: Task<Void, Never>?
 
     // MARK: - Init
 

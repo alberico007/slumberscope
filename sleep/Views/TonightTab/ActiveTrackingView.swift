@@ -2,7 +2,6 @@
 //  ActiveTrackingView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import os
@@ -58,21 +57,56 @@ struct ActiveTrackingView: View {
                         showingSoundPicker: $showingSoundPicker
                     )
 
-                    // Motion level
-                    GlassCard {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Image(systemName: "move.3d")
-                                    .foregroundStyle(.green)
-                                Text("Motion Level")
-                                    .font(.subheadline)
-                                Spacer()
-                                Text(String(format: "%.3f", trackingService.motionService.currentIntensity))
-                                    .font(.subheadline.monospaced())
-                                    .foregroundStyle(.secondary)
+                    // Motion / HR card. When the session was started from
+                    // the Watch, iPhone's accelerometer isn't driving the
+                    // session so we mirror Watch HR here instead of showing
+                    // a useless iPhone motion meter.
+                    if trackingService.isWatchInitiated || trackingService.isUsingWatchMotion {
+                        GlassCard {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "heart.fill")
+                                        .foregroundStyle(.pink)
+                                    Text("Heart Rate (Watch)")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    if let bpm = trackingService.watchService?.liveHeartRate {
+                                        Text("\(Int(bpm.rounded())) bpm")
+                                            .font(.subheadline.monospaced())
+                                            .foregroundStyle(.primary)
+                                    } else {
+                                        Text("—")
+                                            .font(.subheadline.monospaced())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                if let bpm = trackingService.watchService?.liveHeartRate {
+                                    let normalized = min(max((bpm - 40) / 80, 0), 1)
+                                    ProgressView(value: normalized)
+                                        .tint(.pink)
+                                } else {
+                                    Text("Waiting for samples from your Apple Watch…")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            ProgressView(value: min(trackingService.motionService.currentIntensity, 1.0))
-                                .tint(.green)
+                        }
+                    } else {
+                        GlassCard {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Image(systemName: "move.3d")
+                                        .foregroundStyle(.green)
+                                    Text("Motion Level")
+                                        .font(.subheadline)
+                                    Spacer()
+                                    Text(String(format: "%.3f", trackingService.motionService.currentIntensity))
+                                        .font(.subheadline.monospaced())
+                                        .foregroundStyle(.secondary)
+                                }
+                                ProgressView(value: min(trackingService.motionService.currentIntensity, 1.0))
+                                    .tint(.green)
+                            }
                         }
                     }
 
@@ -94,18 +128,44 @@ struct ActiveTrackingView: View {
                         }
                     }
 
-                    // Snoring events counter
+                    // Live events breakdown — grouped by classification bucket
+                    // (Snoring, Dogs, Cats, Voice, Other) so users see exactly
+                    // what the mic is picking up during the session.
                     GlassCard {
-                        HStack {
-                            Image(systemName: "zzz")
-                                .foregroundStyle(.purple)
-                            Text("Snoring Events")
-                                .font(.subheadline)
-                            Spacer()
-                            Text("\(trackingService.audioService.snoringEvents.count)")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.purple)
+                        let groups = trackingService.audioService.snoringEvents
+                            .groupedByClassification()
+                        let total = trackingService.audioService.snoringEvents.count
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Label("Audio Events", systemImage: "waveform")
+                                    .font(.subheadline)
+                                Spacer()
+                                Text("\(total)")
+                                    .font(.title2).fontWeight(.semibold)
+                                    .foregroundStyle(.purple)
+                            }
+                            if total == 0 {
+                                Text("Listening for snoring, barks, voice, and other noises.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                HStack(spacing: 12) {
+                                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                                        HStack(spacing: 4) {
+                                            Image(systemName: group.bucket.icon)
+                                                .font(.caption)
+                                                .foregroundStyle(group.bucket.tint)
+                                            Text("\(group.events.count)")
+                                                .font(.caption.monospacedDigit())
+                                                .foregroundStyle(.primary)
+                                            Text(group.bucket.displayName)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                            }
                         }
                     }
 
@@ -169,10 +229,6 @@ struct ActiveTrackingView: View {
                 }
             }
 
-            // Smart alarm overlay
-            if trackingService.smartAlarmService.alarmTriggered {
-                SmartAlarmOverlay()
-            }
         }
     }
 }
@@ -211,90 +267,6 @@ private struct BatteryWarningBanner: View {
         .frame(maxWidth: .infinity)
         .background(bannerColor.opacity(0.15))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-// MARK: - Smart Alarm Overlay
-
-private struct SmartAlarmOverlay: View {
-
-    @Environment(SleepTrackingService.self) private var trackingService
-
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.7)
-                .ignoresSafeArea()
-
-            VStack(spacing: 24) {
-                Image(systemName: "alarm.fill")
-                    .font(.system(size: 60))
-                    .foregroundStyle(.orange)
-                    .symbolEffect(.bounce, options: .repeating)
-
-                Text("Smart Alarm")
-                    .font(.title)
-                    .fontWeight(.bold)
-
-                Text("Optimal wake-up time detected")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                if let rationale = trackingService.smartAlarmService.latestRationale {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(.purple)
-                        Text(rationale)
-                            .font(.caption)
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.leading)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Color.purple.opacity(0.25))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal, 24)
-                }
-
-                HStack(spacing: 20) {
-                    Button {
-                        trackingService.smartAlarmService.snooze(minutes: 5)
-                    } label: {
-                        Text("Snooze")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                    }
-
-                    Button {
-                        trackingService.smartAlarmService.dismiss()
-                        trackingService.stopTracking()
-                    } label: {
-                        Text("Dismiss")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(.orange)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                    }
-                }
-                .padding(.horizontal)
-
-                Button {
-                    trackingService.smartAlarmService.continueSleeping()
-                } label: {
-                    Text("Continue Sleeping")
-                        .font(.subheadline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                }
-                .padding(.horizontal)
-            }
-            .padding()
-        }
     }
 }
 

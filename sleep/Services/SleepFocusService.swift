@@ -2,7 +2,6 @@
 //  SleepFocusService.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import Foundation
@@ -14,6 +13,7 @@ import UIKit
 #endif
 
 @Observable
+@MainActor
 final class SleepFocusService {
 
     // MARK: - Observable State

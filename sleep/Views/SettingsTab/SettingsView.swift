@@ -2,9 +2,9 @@
 //  SettingsView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
+import MusicKit
 import SwiftData
 import SwiftUI
 
@@ -12,6 +12,7 @@ struct SettingsView: View {
 
     @Environment(SleepSettings.self) private var settings
     @Environment(SleepTrackingService.self) private var trackingService
+    @Environment(MediaPlaybackService.self) private var mediaService
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: \SleepSession.startTime, order: .reverse)
@@ -20,11 +21,11 @@ struct SettingsView: View {
     @Environment(AuthenticationService.self) private var authService
     @State private var showingPDFExport = false
     @State private var showingCSVExport = false
-    @State private var showingTerms = false
     @State private var showingSignOutConfirmation = false
     @State private var showingResetOnboardingConfirmation = false
-    @State private var showingAdvancedDetection = false
     @State private var healthKitError: String?
+    @State private var requestingAppleMusicAuth = false
+    @State private var appleMusicDeniedAlert = false
 
     private let permissionService = PermissionService.shared
 
@@ -43,15 +44,13 @@ struct SettingsView: View {
                         ProfileView()
                     } label: {
                         HStack(spacing: 12) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.title2)
-                                .foregroundStyle(.cyan)
-                                .frame(width: 32)
+                            profileAvatar
+                                .frame(width: 40, height: 40)
 
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(settings.userName.isEmpty ? "Set Up Profile" : settings.userName)
                                     .font(.subheadline)
-                                Text("Name, age, sleep goal")
+                                Text("Photo, name, age, sleep goal")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -67,74 +66,47 @@ struct SettingsView: View {
                     } label: {
                         SettingRow(icon: "clock.fill", color: .cyan, title: "Sleep Schedule", subtitle: "Bedtime, wake time, sleep goal")
                     }
-                    NavigationLink {
-                        AlarmSettingsView()
-                    } label: {
-                        SettingRow(icon: "alarm.waves.left.and.right.fill", color: .orange, title: "Smart Alarm", subtitle: "Wake during light sleep")
-                    }
                 } header: {
                     Text("Sleep")
-                } footer: {
-                    Text("Smart Alarm wakes you during a light sleep stage within a window before your alarm time. Keep a backup iPhone alarm for anything critical.")
                 }
 
                 // MARK: Sleep Audio
                 Section {
-                    Toggle("Apple Music", isOn: $settings.appleMusicEnabled)
+                    Toggle("Apple Music", isOn: Binding(
+                        get: { settings.appleMusicEnabled },
+                        set: { newValue in
+                            if newValue && !settings.appleMusicEnabled {
+                                // Turning on — fire Apple's system auth prompt
+                                // before flipping the toggle. Roll back if denied.
+                                Task { await enableAppleMusicWithAuth() }
+                            } else {
+                                settings.appleMusicEnabled = newValue
+                            }
+                        }
+                    ))
+                    .disabled(requestingAppleMusicAuth)
                     Toggle("Podcasts", isOn: $settings.podcastsEnabled)
-                    Picker("Default Timer", selection: $settings.defaultSleepTimerMinutes) {
-                        Text("15 min").tag(15)
-                        Text("30 min").tag(30)
-                        Text("1 hour").tag(60)
-                        Text("2 hours").tag(120)
-                        Text("Until I wake").tag(0)
-                    }
-                    Toggle("Filter fans & AC from snores", isOn: $settings.environmentalNoiseFilteringEnabled)
                 } header: {
                     Text("Sleep Audio")
                 } footer: {
-                    Text("Apple Music and Podcasts add those categories to the Get Ready for Bed chooser. Environmental filtering uses on-device sound classification to drop non-snore noise.")
+                    Text("Apple Music and Podcasts add those categories to the Get Ready for Bed chooser. Slumberscope automatically filters out fans, AC, and other non-snore noise and uses its cloud classifier for the most accurate verdict.")
                 }
 
                 // MARK: Detection
                 Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Snoring Sensitivity")
-                                .font(.subheadline)
-                            Spacer()
-                            Text(snoringSensitivityLabel)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $settings.snoringSensitivity, in: 0.0...1.0, step: 0.1)
-                        HStack {
-                            Text("Light Snorer")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("Heavy Snorer")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    Button {
-                        showingAdvancedDetection = true
+                    NavigationLink {
+                        MicTestView()
                     } label: {
                         HStack {
-                            Text("Advanced")
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Image(systemName: "mic.circle.fill")
+                                .foregroundStyle(.blue)
+                            Text("Mic Test")
                         }
                     }
                 } header: {
                     Text("Detection")
                 } footer: {
-                    Text("Lower sensitivity catches lighter snoring. Move right if you're getting false positives.")
+                    Text("Sensitivity tunes itself automatically based on your room's baseline noise. Mic Test records a clip, sends it to the classifier, and stores the labeled result on this device.")
                 }
 
                 // MARK: Notifications
@@ -148,7 +120,6 @@ struct SettingsView: View {
                         )
                     }
                     Toggle("Morning Summary", isOn: $settings.morningSummaryEnabled)
-                    Toggle("Weekly Digest", isOn: $settings.weeklyDigestEnabled)
                 }
 
                 // MARK: Integrations
@@ -162,11 +133,6 @@ struct SettingsView: View {
 
                 // MARK: Data
                 Section {
-                    NavigationLink {
-                        PrivacyControlsView()
-                    } label: {
-                        SettingRow(icon: "lock.shield.fill", color: .blue, title: "Privacy & Data", subtitle: "Storage, data management")
-                    }
                     Button {
                         showingPDFExport = true
                     } label: {
@@ -180,19 +146,22 @@ struct SettingsView: View {
                 } header: {
                     Text("Data")
                 } footer: {
-                    Text("All tracking runs on-device. Your data never leaves your iPhone unless you choose to share or export.")
+                    Text("Your sleep history stays on this device and your Firebase account. Exports are generated locally and shared only through the iOS share sheet.")
                 }
 
                 // MARK: Permissions (compact — read-only status)
                 Section {
                     PermissionRow(title: "Microphone", icon: "mic.fill", granted: permissionService.microphoneGranted)
-                    PermissionRow(title: "Motion", icon: "move.3d", granted: permissionService.motionAvailable)
                     PermissionRow(title: "HealthKit", icon: "heart.fill", granted: permissionService.healthKitAuthorized)
                     PermissionRow(title: "Notifications", icon: "bell.fill", granted: permissionService.notificationsAuthorized)
-                    Button("Request Missing Permissions") {
-                        Task { await permissionService.requestAllPermissions() }
+                    if !permissionService.microphoneGranted
+                        || !permissionService.healthKitAuthorized
+                        || !permissionService.notificationsAuthorized {
+                        Button("Request Missing Permissions") {
+                            Task { await permissionService.requestAllPermissions() }
+                        }
+                        .font(.subheadline)
                     }
-                    .font(.subheadline)
                 } header: {
                     Text("Permissions")
                 }
@@ -204,21 +173,10 @@ struct SettingsView: View {
                     } label: {
                         SettingRow(icon: "person.3.fill", color: .orange, title: "About the Team", subtitle: "The people behind Slumberscope")
                     }
-                    Button { showingTerms = true } label: {
-                        SettingRow(icon: "doc.text.fill", color: .indigo, title: "Terms of Service", subtitle: "Usage terms & disclaimers")
-                    }
-                    .tint(.primary)
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("Nights Tracked")
-                        Spacer()
-                        Text("\(sessions.count)")
-                            .foregroundStyle(.secondary)
+                    NavigationLink {
+                        LegalView()
+                    } label: {
+                        SettingRow(icon: "doc.text.fill", color: .indigo, title: "Legal", subtitle: "Version, Terms, Privacy Policy")
                     }
                 } header: {
                     Text("About")
@@ -265,11 +223,15 @@ struct SettingsView: View {
             .sheet(isPresented: $showingCSVExport) {
                 CSVExportView(sessions: sessions)
             }
-            .sheet(isPresented: $showingTerms) {
-                TermsOfServiceView()
-            }
-            .sheet(isPresented: $showingAdvancedDetection) {
-                AdvancedDetectionSheet(settings: settings)
+            .alert("Apple Music Access Needed", isPresented: $appleMusicDeniedAlert) {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Apple Music access was denied. You can allow it in iOS Settings → Slumberscope → Media & Apple Music.")
             }
             .onChange(of: settings.bedtimeReminderEnabled) { _, newValue in
                 notificationService.scheduleBedtimeReminder(at: settings.bedtimeReminderTime, enabled: newValue)
@@ -278,9 +240,6 @@ struct SettingsView: View {
                 if settings.bedtimeReminderEnabled {
                     notificationService.scheduleBedtimeReminder(at: newValue, enabled: true)
                 }
-            }
-            .onChange(of: settings.weeklyDigestEnabled) { _, newValue in
-                notificationService.scheduleWeeklyDigest(enabled: newValue)
             }
             .onChange(of: settings.syncHealthKit) { _, newValue in
                 if newValue {
@@ -300,48 +259,38 @@ struct SettingsView: View {
         }
     }
 
-    private var snoringSensitivityLabel: String {
-        switch settings.snoringSensitivity {
-        case 0.0...0.2: return "Very Sensitive"
-        case 0.2...0.4: return "Sensitive"
-        case 0.4...0.6: return "Normal"
-        case 0.6...0.8: return "Low"
-        default: return "Very Low"
+    @ViewBuilder
+    private var profileAvatar: some View {
+        if let data = settings.userPhotoData, let uiImage = UIImage(data: data) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+        } else {
+            Image(systemName: "person.circle.fill")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.cyan)
         }
     }
-}
 
-// MARK: - Advanced Detection Sheet
-//
-// Kept out of the main Settings surface because these are rarely-touched
-// power-user knobs. Accessed via the "Advanced" row in the Detection section.
-
-private struct AdvancedDetectionSheet: View {
-    @Bindable var settings: SleepSettings
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    VStack(alignment: .leading) {
-                        Text("Minimum Snore Duration: \(String(format: "%.1f", settings.minimumSnoreDuration))s")
-                            .font(.subheadline)
-                        Slider(value: $settings.minimumSnoreDuration, in: 0.3...3.0, step: 0.1)
-                    }
-                } header: {
-                    Text("Thresholds")
-                } footer: {
-                    Text("Shorter durations catch quick snorts and snores; longer durations drop brief throat clears.")
-                }
-            }
-            .navigationTitle("Advanced")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
+    @MainActor
+    private func enableAppleMusicWithAuth() async {
+        requestingAppleMusicAuth = true
+        defer { requestingAppleMusicAuth = false }
+        let status = await mediaService.requestAppleMusicAuthorization()
+        switch status {
+        case .authorized:
+            settings.appleMusicEnabled = true
+        case .denied, .restricted:
+            settings.appleMusicEnabled = false
+            appleMusicDeniedAlert = true
+        case .notDetermined:
+            // User dismissed without choosing — treat as decline.
+            settings.appleMusicEnabled = false
+        @unknown default:
+            settings.appleMusicEnabled = false
         }
     }
 }

@@ -47,6 +47,7 @@ struct CalibrationLogEntry: Identifiable {
 // MARK: - Calibration Service
 
 @Observable
+@MainActor
 final class CalibrationService {
 
     // MARK: - Observable State
@@ -86,9 +87,10 @@ final class CalibrationService {
 
         phase = .calibrating(progress: 0)
 
-        calibrationTimer = Timer.scheduledTimer(withTimeInterval: sampleInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
+        calibrationTimer = Timer.scheduledTimer(withTimeInterval: sampleInterval, repeats: true) { _ in
+            Task { @MainActor [weak self, weak motionService, weak audioService] in
                 guard let self = self else { return }
+                guard let motionService, let audioService else { return }
                 guard let startTime = self.calibrationStartTime else { return }
 
                 let elapsed = Date().timeIntervalSince(startTime)

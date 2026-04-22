@@ -27,6 +27,23 @@ func recommendedSleepLabel(forAge age: Int) -> String {
     }
 }
 
+/// One-sentence explanation for the recommended sleep hours, tailored to age
+/// band. Used in the onboarding age step as live feedback under the stepper.
+func recommendedSleepRationale(forAge age: Int) -> String {
+    switch age {
+    case 13...17:
+        return "Teens are still growing; the CDC recommends 8–10 hours a night for healthy development."
+    case 18...25:
+        return "Young adult sleep needs stay in the 7–9 hour range — less than 7 is linked to worse mood and focus."
+    case 26...64:
+        return "Most adults do best on 7–9 hours a night; consistent timing matters as much as total hours."
+    case 65...:
+        return "After 65, 7–8 hours tends to be enough, but quality and daytime naps matter more than hitting a number."
+    default:
+        return "Adults typically need 7–9 hours a night for full physical and cognitive recovery."
+    }
+}
+
 @Observable
 final class SleepSettings {
 
@@ -40,9 +57,6 @@ final class SleepSettings {
         static let bedtimeReminderTime = "sleep_bedtimeReminderTime"
         static let showSleepScore = "sleep_showSleepScore"
         static let sensitivityLevel = "sleep_sensitivityLevel"
-        static let smartAlarmEnabled = "sleep_smartAlarmEnabled"
-        static let smartAlarmTime = "sleep_smartAlarmTime"
-        static let smartAlarmWindowMinutes = "sleep_smartAlarmWindowMinutes"
         static let morningSummaryEnabled = "sleep_morningSummaryEnabled"
         static let weeklyDigestEnabled = "sleep_weeklyDigestEnabled"
         static let calibrationEnabled = "sleep_calibrationEnabled"
@@ -70,6 +84,7 @@ final class SleepSettings {
         static let userName = "sleep_userName"
         static let userLastName = "sleep_userLastName"
         static let userAge = "sleep_userAge"
+        static let userPhotoData = "sleep_userPhotoData"
         static let userGender = "sleep_userGender"
         static let snoringSensitivity = "sleep_snoringSensitivity"
         static let minimumSnoreDuration = "sleep_minimumSnoreDuration"
@@ -79,6 +94,7 @@ final class SleepSettings {
         static let skipBedIntentConfirmation = "sleep_skipBedIntentConfirmation"
         static let defaultSleepTimerMinutes = "sleep_defaultSleepTimerMinutes"
         static let environmentalNoiseFilteringEnabled = "sleep_environmentalNoiseFilteringEnabled"
+        static let cloudSnoringClassifierEnabled = "sleep_cloudSnoringClassifierEnabled"
     }
 
     // MARK: - Properties
@@ -111,17 +127,6 @@ final class SleepSettings {
         didSet { save() }
     }
 
-    var smartAlarmEnabled: Bool {
-        didSet { save() }
-    }
-
-    var smartAlarmTime: Date {
-        didSet { save() }
-    }
-
-    var smartAlarmWindowMinutes: Int {
-        didSet { save() }
-    }
 
     var morningSummaryEnabled: Bool {
         didSet { save() }
@@ -225,6 +230,13 @@ final class SleepSettings {
         didSet { save() }
     }
 
+    /// JPEG data of the user's profile photo. Displayed in the profile page
+    /// and embedded in PDF exports so clinicians can visually identify the
+    /// patient whose sleep report they're reviewing.
+    var userPhotoData: Data? {
+        didSet { save() }
+    }
+
     /// 0.0 = very sensitive (light snorer), 1.0 = least sensitive (heavy snorer)
     var snoringSensitivity: Double {
         didSet { save() }
@@ -263,6 +275,13 @@ final class SleepSettings {
         didSet { save() }
     }
 
+    /// Send detected snoring clips to an Azure-hosted YAMNet classifier for a
+    /// more accurate label. Off by default — bedroom audio leaving the device
+    /// is opt-in.
+    var cloudSnoringClassifierEnabled: Bool {
+        didSet { save() }
+    }
+
     // MARK: - Defaults
 
     private static func defaultTime(hour: Int, minute: Int) -> Date {
@@ -285,8 +304,6 @@ final class SleepSettings {
             self.bedtimeReminderEnabled = defaults.bool(forKey: Keys.bedtimeReminderEnabled)
             self.showSleepScore = defaults.bool(forKey: Keys.showSleepScore)
             self.sensitivityLevel = defaults.double(forKey: Keys.sensitivityLevel)
-            self.smartAlarmEnabled = defaults.bool(forKey: Keys.smartAlarmEnabled)
-            self.smartAlarmWindowMinutes = defaults.integer(forKey: Keys.smartAlarmWindowMinutes)
             self.morningSummaryEnabled = defaults.bool(forKey: Keys.morningSummaryEnabled)
             self.weeklyDigestEnabled = defaults.bool(forKey: Keys.weeklyDigestEnabled)
             self.calibrationEnabled = defaults.bool(forKey: Keys.calibrationEnabled)
@@ -296,12 +313,6 @@ final class SleepSettings {
                 self.bedtimeReminderTime = bedtimeData
             } else {
                 self.bedtimeReminderTime = Self.defaultTime(hour: 22, minute: 30)
-            }
-
-            if let alarmData = defaults.object(forKey: Keys.smartAlarmTime) as? Date {
-                self.smartAlarmTime = alarmData
-            } else {
-                self.smartAlarmTime = Self.defaultTime(hour: 7, minute: 0)
             }
 
             // New properties with defaults
@@ -331,6 +342,7 @@ final class SleepSettings {
             let ageVal = defaults.integer(forKey: Keys.userAge)
             self.userAge = ageVal > 0 ? ageVal : 30
             self.userGender = defaults.string(forKey: Keys.userGender) ?? "Not specified"
+            self.userPhotoData = defaults.data(forKey: Keys.userPhotoData)
             let senVal = defaults.object(forKey: Keys.snoringSensitivity) as? Double
             self.snoringSensitivity = senVal ?? 0.5
             let durVal = defaults.object(forKey: Keys.minimumSnoreDuration) as? Double
@@ -352,6 +364,9 @@ final class SleepSettings {
             self.environmentalNoiseFilteringEnabled = defaults.object(forKey: Keys.environmentalNoiseFilteringEnabled) == nil
                 ? true
                 : defaults.bool(forKey: Keys.environmentalNoiseFilteringEnabled)
+            self.cloudSnoringClassifierEnabled = defaults.object(forKey: Keys.cloudSnoringClassifierEnabled) == nil
+                ? true
+                : defaults.bool(forKey: Keys.cloudSnoringClassifierEnabled)
         } else {
             // First launch — set all defaults
             self.trackMotion = true
@@ -361,9 +376,6 @@ final class SleepSettings {
             self.bedtimeReminderTime = Self.defaultTime(hour: 22, minute: 30)
             self.showSleepScore = true
             self.sensitivityLevel = 0.5
-            self.smartAlarmEnabled = false
-            self.smartAlarmTime = Self.defaultTime(hour: 7, minute: 0)
-            self.smartAlarmWindowMinutes = 30
             self.morningSummaryEnabled = true
             self.weeklyDigestEnabled = true
             self.calibrationEnabled = true
@@ -390,6 +402,7 @@ final class SleepSettings {
             self.userLastName = ""
             self.userAge = 30
             self.userGender = "Not specified"
+            self.userPhotoData = nil
             self.snoringSensitivity = 0.5
             self.minimumSnoreDuration = 0.4
             self.appleMusicEnabled = false
@@ -397,6 +410,7 @@ final class SleepSettings {
             self.skipBedIntentConfirmation = false
             self.defaultSleepTimerMinutes = 30
             self.environmentalNoiseFilteringEnabled = true
+            self.cloudSnoringClassifierEnabled = true
         }
     }
 
@@ -411,9 +425,6 @@ final class SleepSettings {
         defaults.set(bedtimeReminderTime, forKey: Keys.bedtimeReminderTime)
         defaults.set(showSleepScore, forKey: Keys.showSleepScore)
         defaults.set(sensitivityLevel, forKey: Keys.sensitivityLevel)
-        defaults.set(smartAlarmEnabled, forKey: Keys.smartAlarmEnabled)
-        defaults.set(smartAlarmTime, forKey: Keys.smartAlarmTime)
-        defaults.set(smartAlarmWindowMinutes, forKey: Keys.smartAlarmWindowMinutes)
         defaults.set(morningSummaryEnabled, forKey: Keys.morningSummaryEnabled)
         defaults.set(weeklyDigestEnabled, forKey: Keys.weeklyDigestEnabled)
         defaults.set(calibrationEnabled, forKey: Keys.calibrationEnabled)
@@ -440,6 +451,7 @@ final class SleepSettings {
         defaults.set(userLastName, forKey: Keys.userLastName)
         defaults.set(userAge, forKey: Keys.userAge)
         defaults.set(userGender, forKey: Keys.userGender)
+        defaults.set(userPhotoData, forKey: Keys.userPhotoData)
         defaults.set(snoringSensitivity, forKey: Keys.snoringSensitivity)
         defaults.set(minimumSnoreDuration, forKey: Keys.minimumSnoreDuration)
         defaults.set(appleMusicEnabled, forKey: Keys.appleMusicEnabled)
@@ -447,5 +459,6 @@ final class SleepSettings {
         defaults.set(skipBedIntentConfirmation, forKey: Keys.skipBedIntentConfirmation)
         defaults.set(defaultSleepTimerMinutes, forKey: Keys.defaultSleepTimerMinutes)
         defaults.set(environmentalNoiseFilteringEnabled, forKey: Keys.environmentalNoiseFilteringEnabled)
+        defaults.set(cloudSnoringClassifierEnabled, forKey: Keys.cloudSnoringClassifierEnabled)
     }
 }

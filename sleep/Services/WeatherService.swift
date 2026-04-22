@@ -2,7 +2,6 @@
 //  WeatherService.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import CoreLocation
@@ -25,6 +24,7 @@ struct WakeUpWeather {
 // MARK: - WeatherService
 
 @Observable
+@MainActor
 final class WeatherService: NSObject {
 
     // MARK: - Observable State
@@ -125,25 +125,32 @@ private extension WeatherService {
 
 extension WeatherService: CLLocationManagerDelegate {
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        currentLocation = location
-        locationContinuation?.resume(returning: location)
-        locationContinuation = nil
+        Task { @MainActor [weak self] in
+            self?.currentLocation = location
+            self?.locationContinuation?.resume(returning: location)
+            self?.locationContinuation = nil
+        }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        locationContinuation?.resume(throwing: error)
-        locationContinuation = nil
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        Task { @MainActor [weak self] in
+            self?.locationContinuation?.resume(throwing: error)
+            self?.locationContinuation = nil
+        }
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
-        if status == .authorizedWhenInUse || status == .authorizedAlways {
-            manager.requestLocation()
-        } else if status == .denied || status == .restricted {
-            locationContinuation?.resume(throwing: CLError(.denied))
-            locationContinuation = nil
+        nonisolated(unsafe) let mgr = manager
+        Task { @MainActor [weak self] in
+            if status == .authorizedWhenInUse || status == .authorizedAlways {
+                mgr.requestLocation()
+            } else if status == .denied || status == .restricted {
+                self?.locationContinuation?.resume(throwing: CLError(.denied))
+                self?.locationContinuation = nil
+            }
         }
     }
 }

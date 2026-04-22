@@ -1,0 +1,27 @@
+[Unit]
+Description=SmarterPillow YAMNet snoring inference
+After=network.target
+
+[Service]
+User=snoring
+Group=snoring
+WorkingDirectory=/opt/snoring/server
+Environment=HMAC_SECRET_FILE=/etc/snoring/secret
+Environment=TF_CPP_MIN_LOG_LEVEL=2
+ExecStart=/opt/snoring/venv/bin/gunicorn \
+    --workers 1 \
+    --threads 4 \
+    --timeout 30 \
+    --bind 127.0.0.1:8000 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    app:app
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/snoring
+
+[Install]
+WantedBy=multi-user.target

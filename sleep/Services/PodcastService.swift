@@ -53,6 +53,7 @@ enum PodcastError: LocalizedError {
 // MARK: - Service
 
 @Observable
+@MainActor
 final class PodcastService {
 
     // MARK: - Cache (10 minutes)

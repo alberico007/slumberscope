@@ -2,7 +2,6 @@
 //  PDFReportGenerator.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/16/26.
 //
 
 import SwiftUI
@@ -22,7 +21,14 @@ enum PDFReportGenerator {
 
     // MARK: Generate
 
-    static func generate(sessions: [SleepSession], from startDate: Date, to endDate: Date) -> Data {
+    static func generate(
+        sessions: [SleepSession],
+        from startDate: Date,
+        to endDate: Date,
+        patientName: String? = nil,
+        patientAge: Int? = nil,
+        patientPhoto: Data? = nil
+    ) -> Data {
         let pageRect = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
 
@@ -36,6 +42,40 @@ enum PDFReportGenerator {
             let secondaryTextColor = UIColor.darkGray
             let tertiaryTextColor = UIColor.gray
             let separatorColor = UIColor.lightGray
+
+            // Patient header (photo + name + age) — clinician needs to ID the
+            // person whose report they're holding before glancing at numbers.
+            let trimmedName = patientName?.trimmingCharacters(in: .whitespaces) ?? ""
+            if !trimmedName.isEmpty || patientPhoto != nil {
+                let photoSide: CGFloat = 56
+                if let photoData = patientPhoto, let uiImage = UIImage(data: photoData) {
+                    let photoRect = CGRect(x: margin, y: yPosition, width: photoSide, height: photoSide)
+                    let path = UIBezierPath(ovalIn: photoRect)
+                    if let ctx = UIGraphicsGetCurrentContext() {
+                        ctx.saveGState()
+                        path.addClip()
+                        uiImage.draw(in: photoRect)
+                        ctx.restoreGState()
+                    }
+                }
+                let textOriginX = (patientPhoto != nil ? margin + photoSide + 14 : margin)
+                let nameAttributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 16, weight: .semibold),
+                    .foregroundColor: primaryTextColor
+                ]
+                let detailAttributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 11, weight: .regular),
+                    .foregroundColor: secondaryTextColor
+                ]
+                let nameText = trimmedName.isEmpty ? "Slumberscope User" : trimmedName
+                nameText.draw(at: CGPoint(x: textOriginX, y: yPosition + 6),
+                              withAttributes: nameAttributes)
+                if let age = patientAge, age > 0 {
+                    "Age \(age)".draw(at: CGPoint(x: textOriginX, y: yPosition + 28),
+                                      withAttributes: detailAttributes)
+                }
+                yPosition += photoSide + 16
+            }
 
             // Title
             let titleAttributes: [NSAttributedString.Key: Any] = [
@@ -221,6 +261,7 @@ struct PDFTransferableDocument: Transferable {
 
 struct PDFExportView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(SleepSettings.self) private var settings
 
     let sessions: [SleepSession]
 
@@ -238,10 +279,17 @@ struct PDFExportView: View {
 
                 Section {
                     Button("Generate Report") {
+                        let fullName = [settings.userName, settings.userLastName]
+                            .map { $0.trimmingCharacters(in: .whitespaces) }
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " ")
                         generatedPDF = PDFReportGenerator.generate(
                             sessions: sessions,
                             from: startDate,
-                            to: endDate
+                            to: endDate,
+                            patientName: fullName,
+                            patientAge: settings.userAge,
+                            patientPhoto: settings.userPhotoData
                         )
                     }
                 }

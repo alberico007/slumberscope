@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in. Don't commit the real file.
+
+allowed_ssh_cidr     = "203.0.113.42/32"  # `curl -s ifconfig.me` + /32
+dns_label            = "smarterpillow-snoring"
+ssh_public_key_path  = "~/.ssh/id_rsa.pub"
+repo_url             = "https://github.com/YOURUSER/smarterpillow.git"
+
+# Pass via env so it never lands in state files you might share:
+#   export TF_VAR_hmac_secret=$(openssl rand -hex 32)
+# Or set here (less safe):
+# hmac_secret = "..."

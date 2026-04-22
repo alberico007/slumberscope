@@ -2,7 +2,6 @@
 //  sleepApp.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/16/26.
 //
 
 import FirebaseCore
@@ -36,6 +35,8 @@ private let sleepModelContainer: ModelContainer = {
 @main
 struct sleepApp: App {
 
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var settings = SleepSettings()
     @State private var trackingService = SleepTrackingService()
     @State private var weatherService = WeatherService()
@@ -48,6 +49,7 @@ struct sleepApp: App {
     @State private var podcastService = PodcastService()
     @State private var soundClassifier = SoundClassificationService()
     @State private var intelligenceService = IntelligenceService()
+    @State private var snoringClassifierClient = SnoringClassifierClient()
 
     init() {
         FirebaseApp.configure()
@@ -73,6 +75,7 @@ struct sleepApp: App {
                 .environment(podcastService)
                 .environment(soundClassifier)
                 .environment(intelligenceService)
+                .environment(snoringClassifierClient)
                 .onAppear {
                     AppLogger.appEvent("App launched — configuring services")
                     trackingService.configure(settings: settings, watchService: watchService)
@@ -85,6 +88,11 @@ struct sleepApp: App {
                     // fan/AC/dog/speech don't get counted as snores.
                     trackingService.audioService.attachClassifier(soundClassifier)
                     trackingService.audioService.environmentalFilteringEnabled = settings.environmentalNoiseFilteringEnabled
+                    // Wire the remote YAMNet classifier. It stays dormant
+                    // until the user enables the Cloud Snoring Classifier
+                    // toggle in Settings.
+                    trackingService.audioService.attachRemoteClassifier(snoringClassifierClient)
+                    snoringClassifierClient.enabled = settings.cloudSnoringClassifierEnabled
                     // Tell AudioService who's playing so it can suppress
                     // snoring while the user's own audio is coming out of
                     // the speaker.
@@ -95,9 +103,55 @@ struct sleepApp: App {
                     Task {
                         await cloudService.checkCloudStatus()
                     }
+                    // Push current sign-in state to the Watch so it knows
+                    // whether to show its Idle UI or a "set up on iPhone
+                    // first" prompt.
+                    watchService.sendUserState(
+                        signedIn: authService.isSignedIn,
+                        userName: settings.userName,
+                        userAge: settings.userAge,
+                        sleepGoalHours: settings.sleepGoalHours
+                    )
+                    pushSleepHistoryToWatch()
+                }
+                .onChange(of: authService.isSignedIn) { _, signedIn in
+                    watchService.sendUserState(
+                        signedIn: signedIn,
+                        userName: settings.userName,
+                        userAge: settings.userAge,
+                        sleepGoalHours: settings.sleepGoalHours
+                    )
+                    pushSleepHistoryToWatch()
+                }
+                .onChange(of: settings.userName) { _, newName in
+                    watchService.sendUserState(
+                        signedIn: authService.isSignedIn,
+                        userName: newName,
+                        userAge: settings.userAge,
+                        sleepGoalHours: settings.sleepGoalHours
+                    )
+                }
+                .onChange(of: settings.userAge) { _, newAge in
+                    watchService.sendUserState(
+                        signedIn: authService.isSignedIn,
+                        userName: settings.userName,
+                        userAge: newAge,
+                        sleepGoalHours: settings.sleepGoalHours
+                    )
+                }
+                .onChange(of: settings.sleepGoalHours) { _, newGoal in
+                    watchService.sendUserState(
+                        signedIn: authService.isSignedIn,
+                        userName: settings.userName,
+                        userAge: settings.userAge,
+                        sleepGoalHours: newGoal
+                    )
                 }
                 .onChange(of: settings.environmentalNoiseFilteringEnabled) { _, newValue in
                     trackingService.audioService.environmentalFilteringEnabled = newValue
+                }
+                .onChange(of: settings.cloudSnoringClassifierEnabled) { _, newValue in
+                    snoringClassifierClient.enabled = newValue
                 }
                 .onChange(of: trackingService.phase) { _, newPhase in
                     AppLogger.tracking.info("Phase changed → \(String(describing: newPhase))")
@@ -106,6 +160,7 @@ struct sleepApp: App {
                         watchService.sendTrackingState(isTracking: true, startTime: trackingService.startTime)
                     case .idle, .done:
                         watchService.sendTrackingState(isTracking: false, startTime: nil)
+                        pushSleepHistoryToWatch()
                     case .completing:
                         break
                     }
@@ -127,6 +182,11 @@ struct sleepApp: App {
                        let data = movJSON.data(using: .utf8) {
                         movement = (try? JSONDecoder().decode([MovementDataPoint].self, from: data)) ?? []
                     }
+                    var events: [WatchClassifiedEventSummary] = []
+                    if let evJSON = info["eventsJSON"] as? String,
+                       let data = evJSON.data(using: .utf8) {
+                        events = (try? JSONDecoder.watchHistoryDecoder.decode([WatchClassifiedEventSummary].self, from: data)) ?? []
+                    }
 
                     watchService.sendMorningSummary(
                         score: score, duration: duration, quality: quality,
@@ -134,7 +194,8 @@ struct sleepApp: App {
                         hrMin: info["hrMin"] as? Double ?? 0,
                         hrMax: info["hrMax"] as? Double ?? 0,
                         hrAvg: info["hrAvg"] as? Double ?? 0,
-                        snoringCount: info["snoringCount"] as? Int ?? 0
+                        snoringCount: info["snoringCount"] as? Int ?? 0,
+                        events: events
                     )
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .watchSnoringCountUpdate)) { notification in
@@ -147,7 +208,102 @@ struct sleepApp: App {
                         trackingService.updateWatchHR(hr)
                     }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .startTrackingIntent)) { notification in
+                    let source = (notification.userInfo?["source"] as? String) ?? "iphone"
+                    AppLogger.tracking.info("🟢 Received startTrackingIntent (app-level) — phase: \(String(describing: trackingService.phase)), source: \(source)")
+                    if trackingService.phase == .idle {
+                        trackingService.startTracking(watchInitiated: source == "watch")
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .stopTrackingIntent)) { notification in
+                    let source = (notification.userInfo?["source"] as? String) ?? "iphone"
+                    AppLogger.tracking.info("🔴 Received stopTrackingIntent (app-level) — phase: \(String(describing: trackingService.phase)), source: \(source)")
+                    if trackingService.phase == .tracking || trackingService.phase == .calibrating {
+                        trackingService.stopTracking()
+                    }
+                    // A stop triggered from the Watch (or any non-iPhone
+                    // surface) can't fill out the Morning Review, so auto-save
+                    // with a default fair quality rating. Runs async so the
+                    // remote classifier drain inside saveSession can complete.
+                    if source == "watch" {
+                        Task {
+                            AppLogger.tracking.info("💾 Auto-saving session from Watch-initiated stop")
+                            let context = ModelContext(sleepModelContainer)
+                            let saved = await trackingService.saveSession(
+                                quality: .fair,
+                                notes: "Stopped from Apple Watch",
+                                modelContext: context,
+                                cloudService: cloudService
+                            )
+                            if let saved {
+                                AppLogger.tracking.info("✅ Auto-saved Watch session — score: \(saved.sleepScore), duration: \(Int(saved.durationSeconds))s")
+                            } else {
+                                AppLogger.tracking.warning("⚠️ Auto-save returned nil — nothing to save?")
+                            }
+                            pushSleepHistoryToWatch()
+                        }
+                    }
+                }
+                .onChange(of: scenePhase) { _, newPhase in
+                    // Every time the iPhone app comes to foreground, re-push
+                    // the latest user state and history to the Watch. Covers
+                    // the after-install / after-sign-up cases where the Watch
+                    // was stuck on "Set up on iPhone first" because the initial
+                    // push raced with WCSession activation.
+                    if newPhase == .active {
+                        AppLogger.general.info("📱 Scene active — re-pushing watch state (signedIn: \(authService.isSignedIn), name: '\(settings.userName)', age: \(settings.userAge), goal: \(settings.sleepGoalHours)h)")
+                        watchService.sendUserState(
+                            signedIn: authService.isSignedIn,
+                            userName: settings.userName,
+                            userAge: settings.userAge,
+                            sleepGoalHours: settings.sleepGoalHours
+                        )
+                        pushSleepHistoryToWatch()
+                        // Also try direct sendMessage — more reliable than
+                        // updateApplicationContext on fresh sim pairs.
+                        watchService.pushStateToWatchViaMessage()
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .watchClassifierEvent)) { notification in
+                    guard let info = notification.userInfo,
+                          let label = info["label"] as? String,
+                          let confidence = info["confidence"] as? Double else { return }
+                    let ts = (info["timestamp"] as? TimeInterval).map { Date(timeIntervalSince1970: $0) } ?? Date()
+                    AppLogger.tracking.info("⌚ Handling watch classifier event: \(label) (\(String(format: "%.2f", confidence)))")
+                    trackingService.audioService.commitWatchClassifiedEvent(
+                        label: label,
+                        confidence: confidence,
+                        at: ts
+                    )
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .watchReadyToReceive)) { _ in
+                    // WCSession just activated / Watch asked for state.
+                    // Push via sendMessage (fast + reliable) and via
+                    // updateApplicationContext (persistent).
+                    AppLogger.general.info("⌚ watchReadyToReceive — pushing state (signedIn: \(authService.isSignedIn), name: '\(settings.userName)')")
+                    watchService.sendUserState(
+                        signedIn: authService.isSignedIn,
+                        userName: settings.userName,
+                        userAge: settings.userAge,
+                        sleepGoalHours: settings.sleepGoalHours
+                    )
+                    pushSleepHistoryToWatch()
+                    watchService.pushStateToWatchViaMessage()
+                }
         }
         .modelContainer(sleepModelContainer)
+    }
+
+    /// Fetches the most recent 20 sleep sessions from SwiftData and pushes
+    /// the last 7 to the Watch so its History tab renders offline.
+    private func pushSleepHistoryToWatch() {
+        let context = ModelContext(sleepModelContainer)
+        var descriptor = FetchDescriptor<SleepSession>(
+            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+        )
+        descriptor.fetchLimit = 20
+        if let sessions = try? context.fetch(descriptor) {
+            watchService.sendSleepHistory(sessions)
+        }
     }
 }

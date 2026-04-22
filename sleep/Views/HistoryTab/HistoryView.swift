@@ -2,7 +2,6 @@
 //  HistoryView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import SwiftData
@@ -73,6 +72,22 @@ private struct SessionRow: View {
                 Text(FormatHelpers.duration(session.durationSeconds))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                // Audio indicator — tells the user there are recorded clips
+                // they can play back in the detail view. Without this, the
+                // playback feature is invisible from the list.
+                if session.snoringCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "waveform")
+                            .font(.caption2)
+                        Text("\(session.snoringCount)")
+                            .font(.caption.monospacedDigit())
+                    }
+                    .foregroundStyle(.cyan)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.cyan.opacity(0.12))
+                    .clipShape(Capsule())
+                }
 
                 Spacer()
 

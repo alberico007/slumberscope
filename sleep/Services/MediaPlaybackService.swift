@@ -34,6 +34,7 @@ struct NowPlayingInfo: Sendable, Equatable {
 // MARK: - MediaPlaybackService
 
 @Observable
+@MainActor
 final class MediaPlaybackService {
 
     // MARK: - Observable state
@@ -202,7 +203,7 @@ final class MediaPlaybackService {
             return
         }
         timerRemaining = TimeInterval(minutes * 60)
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.timerRemaining -= 1
@@ -215,18 +216,23 @@ final class MediaPlaybackService {
         }
     }
 
+    /// Step counter for the fade-out timer. Hoisted to an instance property
+    /// so the Timer's `@Sendable` block doesn't have to capture a local
+    /// `var step` (Swift 6 forbids mutating captured-var across actors).
+    private var fadeStep: Int = 0
+
     /// Linear volume ramp to 0 over `duration` seconds, then stop.
     @MainActor
     private func fadeOutAndStop(duration: TimeInterval) async {
         let steps = 20
         let stepInterval = duration / Double(steps)
-        var step = 0
+        fadeStep = 0
         fadeTimer?.invalidate()
-        fadeTimer = Timer.scheduledTimer(withTimeInterval: stepInterval, repeats: true) { [weak self] _ in
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: stepInterval, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                step += 1
-                let fraction = Float(1.0 - Double(step) / Double(steps))
+                self.fadeStep += 1
+                let fraction = Float(1.0 - Double(self.fadeStep) / Double(steps))
                 if let source = self.nowPlaying?.source {
                     switch source {
                     case .appleMusic:
@@ -240,7 +246,7 @@ final class MediaPlaybackService {
                         break
                     }
                 }
-                if step >= steps {
+                if self.fadeStep >= steps {
                     self.fadeTimer?.invalidate()
                     self.fadeTimer = nil
                     self.stop()

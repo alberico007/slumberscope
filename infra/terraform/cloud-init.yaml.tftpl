@@ -1,0 +1,86 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - python3.11
+  - python3.11-venv
+  - python3-pip
+  - libsndfile1
+  - curl
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+
+users:
+  - default
+  - name: snoring
+    system: true
+    no_create_home: true
+    shell: /usr/sbin/nologin
+
+write_files:
+  - path: /etc/snoring/secret
+    content: ${hmac_secret}
+    permissions: "0440"
+  - path: /etc/caddy/Caddyfile
+    owner: root:root
+    permissions: "0644"
+    content: |
+      ${fqdn} {
+          encode gzip
+          reverse_proxy 127.0.0.1:8000 {
+              transport http {
+                  read_timeout 30s
+              }
+          }
+          log {
+              output file /var/log/caddy/access.log {
+                  roll_size 10mb
+                  roll_keep 3
+              }
+              format json
+          }
+      }
+  - path: /root/server_bundle.tar.gz.b64
+    owner: root:root
+    permissions: "0600"
+    content: |
+      ${server_tarball_b64}
+
+runcmd:
+  # Fix ownership of the HMAC secret now that the snoring user exists
+  - chown snoring:snoring /etc/snoring/secret
+
+  # Caddy install (official repo)
+  - curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  - curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt | tee /etc/apt/sources.list.d/caddy-stable.list
+  - apt-get update
+  - apt-get install -y caddy
+  # Belt-and-suspenders: ensure the caddy user/group exist (the deb post-install
+  # hook has been observed to skip this on some image variants).
+  - getent group caddy || groupadd --system caddy
+  - getent passwd caddy || useradd --system --gid caddy --home-dir /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+
+  # Extract embedded server bundle to /opt/snoring/server
+  - mkdir -p /opt/snoring/server /var/log/snoring /var/log/caddy
+  - base64 -d /root/server_bundle.tar.gz.b64 > /root/server_bundle.tar.gz
+  - tar -xzf /root/server_bundle.tar.gz -C /opt/snoring/server
+  - rm -f /root/server_bundle.tar.gz /root/server_bundle.tar.gz.b64
+
+  # Python venv + deps
+  - python3.11 -m venv /opt/snoring/venv
+  - /opt/snoring/venv/bin/pip install --upgrade pip
+  - /opt/snoring/venv/bin/pip install -r /opt/snoring/server/requirements.txt
+
+  # Ownership after everything is in place
+  - chown -R snoring:snoring /opt/snoring /var/log/snoring
+  - chown -R caddy:caddy /var/log/caddy
+
+  # Systemd unit for the FastAPI worker
+  - cp /opt/snoring/server/systemd/snoring-inference.service /etc/systemd/system/
+  - systemctl daemon-reload
+  - systemctl enable --now snoring-inference.service
+
+  # Restart Caddy so it picks up the Caddyfile
+  - systemctl restart caddy

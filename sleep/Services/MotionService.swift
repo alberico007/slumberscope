@@ -9,6 +9,7 @@ import Foundation
 import os
 
 @Observable
+@MainActor
 final class MotionService {
 
     // MARK: - Observable State
@@ -39,7 +40,7 @@ final class MotionService {
         // motion isn't available (very old devices / simulator), fall back.
         if motionManager.isDeviceMotionAvailable {
             motionManager.deviceMotionUpdateInterval = 0.1 // 10 Hz
-            motionManager.startDeviceMotionUpdates(to: OperationQueue()) { @Sendable [weak self] data, error in
+            motionManager.startDeviceMotionUpdates(to: OperationQueue()) { @Sendable data, error in
                 guard let data = data, error == nil else { return }
                 let ua = data.userAcceleration // gravity-separated acceleration
                 let magnitude = sqrt(ua.x * ua.x + ua.y * ua.y + ua.z * ua.z)
@@ -53,7 +54,7 @@ final class MotionService {
         } else if motionManager.isAccelerometerAvailable {
             // Fallback path for older devices.
             motionManager.accelerometerUpdateInterval = 0.1
-            motionManager.startAccelerometerUpdates(to: OperationQueue()) { @Sendable [weak self] data, error in
+            motionManager.startAccelerometerUpdates(to: OperationQueue()) { @Sendable data, error in
                 guard let data = data, error == nil else { return }
                 let x = data.acceleration.x
                 let y = data.acceleration.y
@@ -74,7 +75,7 @@ final class MotionService {
         }
 
         // 30-second sampling timer to aggregate data points
-        samplingTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        samplingTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 self?.aggregateRecentData()
             }

@@ -2,7 +2,6 @@
 //  AboutTeamView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import SwiftUI
@@ -17,19 +16,25 @@ struct AboutTeamView: View {
             name: "Simon Alberico",
             role: "Cyber Security",
             initials: "SA",
-            gradient: [Color.cyan, Color.blue]
+            gradient: [Color.cyan, Color.blue],
+            imageName: "Simon",
+            linkedInURL: URL(string: "https://www.linkedin.com/in/simon-alberico-0b2769329/")
         ),
         TeamMember(
             name: "Aia Ahmed",
             role: "Computer Science",
             initials: "AA",
-            gradient: [Color.purple, Color.pink]
+            gradient: [Color.purple, Color.pink],
+            imageName: "Aia",
+            linkedInURL: URL(string: "https://www.linkedin.com/in/aia-ahmed/")
         ),
         TeamMember(
             name: "Ananjin Batdelger",
             role: "Software Engineering",
             initials: "AB",
-            gradient: [Color.green, Color.teal]
+            gradient: [Color.green, Color.teal],
+            imageName: "Ana",
+            linkedInURL: URL(string: "https://www.linkedin.com/in/anabatdelger/")
         )
     ]
 
@@ -106,6 +111,12 @@ struct TeamMember {
     let role: String
     let initials: String
     let gradient: [Color]
+    /// Asset-catalog image name. When set, the card shows the photo instead
+    /// of the initials/gradient avatar.
+    let imageName: String?
+    /// LinkedIn profile URL. When set, the card renders an "in" badge and
+    /// becomes tappable, opening the profile in Safari / LinkedIn app.
+    let linkedInURL: URL?
 }
 
 // MARK: - TeamMemberCard
@@ -113,42 +124,71 @@ struct TeamMember {
 private struct TeamMemberCard: View {
 
     let member: TeamMember
-    @State private var pressed = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
-        HStack(spacing: 16) {
-            // Avatar
+        Button {
+            if let url = member.linkedInURL { openURL(url) }
+        } label: {
+            HStack(spacing: 16) {
+                avatar
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(member.name)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Text(member.role)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if member.linkedInURL != nil {
+                    linkedInBadge
+                }
+            }
+            .padding(16)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(member.linkedInURL == nil)
+    }
+
+    @ViewBuilder private var avatar: some View {
+        if let imageName = member.imageName {
+            Image(imageName)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
+        } else {
             ZStack {
                 Circle()
                     .fill(
                         LinearGradient(colors: member.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
                     )
                     .frame(width: 56, height: 56)
-
                 Text(member.initials)
                     .font(.headline)
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
             }
-
-            // Info
-            VStack(alignment: .leading, spacing: 3) {
-                Text(member.name)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                Text(member.role)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        )
+    }
+
+    private var linkedInBadge: some View {
+        // LinkedIn brand "in" mark — small filled square with rounded corners
+        // and the lowercase "in" centered. Visual cue that the row is tappable.
+        Text("in")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .frame(width: 24, height: 24)
+            .background(Color(red: 0.04, green: 0.40, blue: 0.71))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .accessibilityLabel("Open LinkedIn profile")
     }
 }

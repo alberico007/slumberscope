@@ -18,11 +18,33 @@ private struct AudioAnalysis: Sendable {
 }
 
 @Observable
+@MainActor
 final class AudioService {
     var isTracking = false
     var currentAmplitude: Double = 0.0
     var snoringBandEnergy: Double = 0.0
     var snoringEvents: [SnoringEvent] = []
+
+    /// Number of events whose remote classification is still in flight or
+    /// being retried. SleepTrackingService polls this on session end so it
+    /// can wait briefly for reconciliations to finish before persisting.
+    private(set) var pendingRemoteCount: Int = 0
+
+    /// Remote YAMNet classifier. When attached and `.enabled == true`, each
+    /// committed snoring event gets re-classified against the Azure endpoint
+    /// and its label + confidence overwritten. The local SoundAnalysis veto
+    /// still runs first, so obvious non-snores never reach the cloud.
+    private(set) weak var remoteClassifier: SnoringClassifierClient?
+
+    private var remoteQueueContinuation: AsyncStream<PendingRemoteItem>.Continuation?
+    private var remoteWorker: Task<Void, Never>?
+
+    private struct PendingRemoteItem: Sendable {
+        let eventID: UUID
+        let clipURL: URL
+        let sampleRate: Double
+        var attempts: Int = 0
+    }
 
     // Adaptive baseline
     private var ambientBaseline: Double = 0.0
@@ -105,12 +127,9 @@ final class AudioService {
         // first buffers flow through both the FFT analyzer and SoundAnalysis.
         classifier?.attach(to: engine)
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable [weak self] buffer, time in
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, time in
             let analysis = Self.analyzeBuffer(buffer: buffer, sampleRate: format.sampleRate)
-            // Hand the same buffer to the environmental classifier. The
-            // classifier runs off the main thread; it only reads the buffer.
-            self?.classifier?.analyze(buffer, at: time)
-            // Copy buffer for snoring clip recording
+            // Copy buffer for snoring clip recording AND classifier feed.
             let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength)
             if let copy {
                 copy.frameLength = buffer.frameLength
@@ -120,15 +139,22 @@ final class AudioService {
                     }
                 }
             }
+            nonisolated(unsafe) let copyForActor = copy
+            let sampleTime = time.sampleTime
             Task { @MainActor [weak self] in
-                self?.processAnalysis(analysis)
-                if let copy { self?.appendBuffer(copy) }
+                guard let self else { return }
+                self.processAnalysis(analysis)
+                if let copyForActor {
+                    self.appendBuffer(copyForActor)
+                    self.classifier?.analyzeCopy(copyForActor, sampleTime: sampleTime)
+                }
             }
         }
 
         do {
             try engine.start()
             isTracking = true
+            startRemoteWorker()
             AppLogger.audio.info("🎙️ Audio tracking started")
         } catch {
             AppLogger.audio.error("Audio engine failed to start: \(error.localizedDescription)")
@@ -138,6 +164,107 @@ final class AudioService {
     /// Inject the environmental-noise classifier. Call before `startTracking`.
     func attachClassifier(_ classifier: SoundClassificationService) {
         self.classifier = classifier
+        // Subscribe to classifier-driven events. These catch bark / meow /
+        // speech bursts that are too brief or too high-frequency to pass the
+        // amplitude + band-ratio gate. AudioService weak-retains the
+        // classifier so the closure below is safe with weak self.
+        classifier.onTargetEvent = { [weak self] label, confidence in
+            // The classifier callback isn't actor-isolated; commitClassifier-
+            // DrivenEvent touches @MainActor state (snoringEvents). Dispatch.
+            Task { @MainActor in
+                self?.commitClassifierDrivenEvent(label: label, confidence: confidence)
+            }
+        }
+    }
+
+    /// Commit an event that was already classified by the Watch's own
+    /// audio pipeline. The Watch did the HTTPS+HMAC classify round-trip
+    /// itself, so we trust its label and skip the local cloud reconciler.
+    @MainActor
+    func commitWatchClassifiedEvent(label: String, confidence: Double, at eventTime: Date) {
+        guard isTracking else { return }
+        // Dedupe against anything we committed in the last ~2 s.
+        if let last = snoringEvents.last,
+           eventTime.timeIntervalSince(last.startTime) < 2.0 {
+            return
+        }
+        let start = eventTime.addingTimeInterval(-1.0)
+        var event = SnoringEvent(startTime: start, duration: 2.0, averageAmplitude: 0.0)
+        event.classification = Self.displayLabel(forAppleLabel: label)
+        event.classificationConfidence = confidence
+        event.remoteClassificationPending = false
+        snoringEvents.append(event)
+        AppLogger.audio.notice("⌚ Watch classifier event → \(event.classification) conf=\(String(format: "%.2f", confidence))")
+        // The iPhone mic is running its own tap during tracking — capture a
+        // clip from OUR ring buffer so the Reports tab can play back the
+        // watch-detected sound instead of showing "No recording".
+        recordSnoringClip(for: event)
+    }
+
+    /// Commit a SnoringEvent driven by the on-device classifier. Bypasses the
+    /// amplitude + band-ratio + burst-grouping gates (tuned for snoring) so
+    /// shorter non-snoring sounds (barks, meows, speech) still get captured
+    /// and categorized. Still goes through the cloud reconciler downstream.
+    @MainActor
+    private func commitClassifierDrivenEvent(label: String, confidence: Double) {
+        // Only run during active tracking, and only after the baseline has
+        // calibrated so we don't spam events from the first second of setup.
+        guard isTracking, baselineCalibrated else { return }
+
+        // Deduplicate against the amplitude path — if an event was just
+        // committed by finalizeBurst() in the last ~2s, don't double-count.
+        let now = Date()
+        if let last = snoringEvents.last,
+           now.timeIntervalSince(last.startTime) < 2.0 {
+            return
+        }
+
+        // Synthetic event timing: centered on "now", duration = sustain
+        // window (~1.5 s — between sustainSeconds and cooldownSeconds).
+        // Amplitude 0 because we bypassed the RMS measurement; UI uses
+        // audioFileURL for playback so the 0 only affects the waveform viz.
+        let eventStart = now.addingTimeInterval(-1.0)
+        var event = SnoringEvent(startTime: eventStart, duration: 1.5, averageAmplitude: 0.0)
+        event.classification = Self.displayLabel(forAppleLabel: label)
+        event.classificationConfidence = confidence
+        let remoteEnabled = remoteClassifier?.enabled ?? false
+        event.remoteClassificationPending = remoteEnabled
+        snoringEvents.append(event)
+        let eventID = event.id
+        AppLogger.audio.notice("🧩 Classifier-driven event — \(event.classification) conf=\(String(format: "%.2f", confidence))")
+
+        recordSnoringClip(for: event)
+
+        // Queue for cloud YAMNet reconciliation (same path as amplitude flow).
+        if remoteEnabled,
+           let idx = snoringEvents.firstIndex(where: { $0.id == eventID }),
+           let clipURL = snoringEvents[idx].audioFileURL {
+            let sr = audioBufferFormat?.sampleRate ?? 44_100
+            let item = PendingRemoteItem(eventID: eventID, clipURL: clipURL, sampleRate: sr)
+            pendingRemoteCount += 1
+            remoteQueueContinuation?.yield(item)
+        }
+    }
+
+    /// Translate Apple's SNClassifier label format (lowercase_underscore) into
+    /// the display strings our SnoringEvent.classification conventions use.
+    /// Keeps the category bucketing in the morning-review UI consistent.
+    private static func displayLabel(forAppleLabel appleLabel: String) -> String {
+        switch appleLabel {
+        case "dog", "bark": return "Dog"
+        case "cat", "meow": return "Cat"
+        case "speech", "whispering", "laughter": return "Speech"
+        case "snoring": return "snoring"          // lowercase matches legacy
+        case "cough": return "Cough"
+        case "sneeze": return "Sneeze"
+        default: return appleLabel.capitalized
+        }
+    }
+
+    /// Inject the remote YAMNet classifier. Call once at app startup. Only
+    /// has effect when `client.enabled == true` and the user has opted in.
+    func attachRemoteClassifier(_ client: SnoringClassifierClient) {
+        self.remoteClassifier = client
     }
 
     /// Inject the MediaPlaybackService so we can suppress snoring events
@@ -158,6 +285,99 @@ final class AudioService {
         isTracking = false
         currentAmplitude = 0
         snoringBandEnergy = 0
+        // Close the remote queue but leave the worker running — it'll drain
+        // whatever is still queued, then exit once the stream finishes.
+        remoteQueueContinuation?.finish()
+        remoteQueueContinuation = nil
+    }
+
+    /// Wait (up to `timeout`) for every queued remote classification to
+    /// either succeed or give up. Returns after the queue drains or the
+    /// timeout fires, whichever comes first. Call from SleepTrackingService
+    /// before persisting the session so the saved event labels reflect
+    /// remote verdicts when possible.
+    func awaitRemoteDrain(timeout: TimeInterval) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while pendingRemoteCount > 0 && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100 ms
+        }
+        if pendingRemoteCount > 0 {
+            AppLogger.audio.info("⏱️ Remote classification drain timed out with \(self.pendingRemoteCount) events still pending")
+        }
+    }
+
+    // MARK: - Remote classification worker
+
+    private func startRemoteWorker() {
+        guard remoteWorker == nil else { return }
+        let (stream, continuation) = AsyncStream<PendingRemoteItem>.makeStream(bufferingPolicy: .unbounded)
+        remoteQueueContinuation = continuation
+        remoteWorker = Task { @MainActor [weak self] in
+            for await item in stream {
+                await self?.processRemoteItem(item)
+            }
+            self?.remoteWorker = nil
+        }
+    }
+
+    private func processRemoteItem(_ initial: PendingRemoteItem) async {
+        var item = initial
+        guard let client = remoteClassifier else {
+            decrementPending(for: item.eventID)
+            return
+        }
+        let maxAttempts = 3
+        while item.attempts < maxAttempts {
+            item.attempts += 1
+            do {
+                let result = try await client.classify(clipURL: item.clipURL, sampleRate: item.sampleRate)
+                applyRemoteResult(to: item.eventID, label: result.label, confidence: result.confidence)
+                return
+            } catch SnoringClassifierError.disabled, SnoringClassifierError.noEndpoint, SnoringClassifierError.noSecret {
+                // Remote classifier isn't configured — leave the local label in place.
+                applyRemoteFailure(to: item.eventID)
+                return
+            } catch {
+                AppLogger.audio.error("Remote classify attempt \(item.attempts) failed: \(String(describing: error))")
+                if item.attempts < maxAttempts {
+                    let delay = UInt64(pow(2.0, Double(item.attempts)) * 500_000_000)
+                    try? await Task.sleep(nanoseconds: delay)
+                }
+            }
+        }
+        applyRemoteFailure(to: item.eventID)
+    }
+
+    private func applyRemoteResult(to eventID: UUID, label: String, confidence: Double) {
+        guard let idx = snoringEvents.firstIndex(where: { $0.id == eventID }) else {
+            decrementPending(for: eventID)
+            return
+        }
+        if label == "Snoring" || label == "Snort" {
+            snoringEvents[idx].classification = label
+            snoringEvents[idx].classificationConfidence = confidence
+        } else {
+            // Remote says this wasn't a snore — demote the event so
+            // reports and the score don't count it as one.
+            snoringEvents[idx].classification = label
+            snoringEvents[idx].classificationConfidence = confidence
+        }
+        snoringEvents[idx].remoteClassificationPending = false
+        snoringEvents[idx].remoteClassificationFailed = false
+        decrementPending(for: eventID)
+        AppLogger.audio.info("✅ Remote classify → \(label) (\(String(format: "%.2f", confidence))) for event \(eventID.uuidString.prefix(8))")
+    }
+
+    private func applyRemoteFailure(to eventID: UUID) {
+        if let idx = snoringEvents.firstIndex(where: { $0.id == eventID }) {
+            snoringEvents[idx].remoteClassificationPending = false
+            snoringEvents[idx].remoteClassificationFailed = true
+        }
+        decrementPending(for: eventID)
+    }
+
+    private func decrementPending(for _: UUID) {
+        if pendingRemoteCount > 0 { pendingRemoteCount -= 1 }
     }
 
     // MARK: - Static Analysis (runs on background thread)
@@ -359,12 +579,26 @@ final class AudioService {
         var event = SnoringEvent(startTime: eventStart, duration: totalDuration, averageAmplitude: avgAmplitude)
         event.classification = classification
         event.classificationConfidence = confidence
+        let remoteEnabled = remoteClassifier?.enabled ?? false
+        event.remoteClassificationPending = remoteEnabled
         snoringEvents.append(event)
+        let eventID = event.id
         AppLogger.audio.notice("😴 Snoring event — amp: \(avgAmplitude), dur: \(totalDuration), label: \(classification) (\(String(format: "%.2f", confidence)))")
         recentBursts.removeAll()
 
         // Record a 10-second clip of the snoring
         recordSnoringClip(for: event)
+
+        // If the remote classifier is on, queue this event for YAMNet. The
+        // worker task runs off-main and reconciles the event row in place.
+        if remoteEnabled,
+           let idx = snoringEvents.firstIndex(where: { $0.id == eventID }),
+           let clipURL = snoringEvents[idx].audioFileURL {
+            let sr = audioBufferFormat?.sampleRate ?? 44_100
+            let item = PendingRemoteItem(eventID: eventID, clipURL: clipURL, sampleRate: sr)
+            pendingRemoteCount += 1
+            remoteQueueContinuation?.yield(item)
+        }
     }
 
     // MARK: - Buffer Ring Management
@@ -381,33 +615,42 @@ final class AudioService {
     // MARK: - Snoring Clip Recording
 
     private func recordSnoringClip(for event: SnoringEvent) {
-        guard !isRecordingClip, !audioBufferRing.isEmpty, let format = audioBufferFormat else {
-            AppLogger.audio.info("🎙️ Skip clip — isRecording=\(self.isRecordingClip), bufferCount=\(self.audioBufferRing.count), hasFormat=\(self.audioBufferFormat != nil)")
+        guard !audioBufferRing.isEmpty, let format = audioBufferFormat else {
+            AppLogger.audio.info("🎙️ Skip clip — bufferCount=\(self.audioBufferRing.count), hasFormat=\(self.audioBufferFormat != nil)")
             return
         }
-        isRecordingClip = true
 
         let clipsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SnoringClips", isDirectory: true)
         try? FileManager.default.createDirectory(at: clipsDir, withIntermediateDirectories: true)
 
         // Unique enough to avoid collisions when multiple snores occur in
-        // the same wall-clock second (previously two snores in a single
-        // second would overwrite each other's WAV files).
+        // the same wall-clock second.
         let fileName = "snore_\(Int(event.startTime.timeIntervalSince1970))_\(UUID().uuidString.prefix(6)).wav"
         let fileURL = clipsDir.appendingPathComponent(fileName)
 
-        // Snapshot the buffers so we write a consistent set even if the
-        // main tap fires more during the write.
-        let buffersToWrite = audioBufferRing
+        // Only save the trailing audio around the event — not the whole ~15s
+        // ring. Events are typically < 2s; take event.duration + a small
+        // pre-roll so the user hears the exact bark / snore / meow, not a
+        // minute of silence. (Previously we wrote the entire ring, producing
+        // huge clips, and the isRecordingClip gate dropped concurrent events
+        // entirely — leaving most SnoringEvents with no audio at all.)
+        let targetSeconds = min(5.0, max(1.5, event.duration + 1.0))
+        let sampleRate = format.sampleRate
+        let maxFrames = AVAudioFrameCount(targetSeconds * sampleRate)
+        var accumulatedFrames: AVAudioFrameCount = 0
+        var buffersToWrite: [AVAudioPCMBuffer] = []
+        for buffer in audioBufferRing.reversed() {
+            buffersToWrite.insert(buffer, at: 0)
+            accumulatedFrames += buffer.frameLength
+            if accumulatedFrames >= maxFrames { break }
+        }
 
         do {
             // Explicitly specify commonFormat + interleaved so the WAV file
             // matches the AVAudioPCMBuffer format exactly. Without this
-            // AVAudioFile(forWriting:settings:) can silently create a file
-            // header that disagrees with the buffer layout (float32 vs int16),
-            // producing a WAV whose AVAudioPlayer reports duration 0 and
-            // plays silence.
+            // AVAudioFile can silently create a mismatched header whose
+            // AVAudioPlayer reports duration 0 and plays silence.
             let audioFile = try AVAudioFile(
                 forWriting: fileURL,
                 settings: format.settings,
@@ -421,30 +664,38 @@ final class AudioService {
             }
 
             let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int) ?? 0
-            AppLogger.audio.info("🎙️ Snoring clip saved: \(fileName) (\(buffersToWrite.count) buffers, \(totalFrames) frames, \(fileSize) bytes)")
+            AppLogger.audio.info("🎙️ Snoring clip saved: \(fileName) (\(buffersToWrite.count) buffers, \(totalFrames) frames, \(fileSize) bytes, target \(String(format: "%.1fs", targetSeconds)))")
 
             guard totalFrames > 0, fileSize > 64 else {
                 AppLogger.audio.error("🎙️ Clip file looks empty — skipping URL assignment")
                 try? FileManager.default.removeItem(at: fileURL)
-                isRecordingClip = false
                 return
             }
 
-            // Update the last event with the file URL
-            if let lastIdx = snoringEvents.indices.last {
+            // Attach the clip to the event that triggered this call, not
+            // blindly to `snoringEvents.last` — with concurrent events the
+            // last index may have moved on and we'd orphan the wrong clip.
+            if let idx = snoringEvents.firstIndex(where: { $0.id == event.id }) {
+                snoringEvents[idx].audioFileURL = fileURL
+            } else if let lastIdx = snoringEvents.indices.last {
                 snoringEvents[lastIdx].audioFileURL = fileURL
             }
         } catch {
             AppLogger.audio.error("🎙️ Failed to save snoring clip: \(error.localizedDescription)")
         }
-
-        isRecordingClip = false
     }
 
     private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, options: [.mixWithOthers, .defaultToSpeaker])
+            // Mode `.measurement` disables iOS voice processing (AGC, noise
+            // suppression, beam-forming) that would otherwise mangle the raw
+            // audio before YAMNet / SoundAnalysis sees it. Yields noticeably
+            // better classifier confidence for non-voice sounds (bark, meow,
+            // snore).
+            try session.setCategory(.playAndRecord,
+                                    mode: .measurement,
+                                    options: [.mixWithOthers, .defaultToSpeaker])
             try session.setActive(true)
         } catch {
             AppLogger.audio.error("Audio session configuration failed: \(error.localizedDescription)")

@@ -12,6 +12,7 @@ import os
 import CoreMotion
 #endif
 
+@MainActor
 final class WatchMotionService: ObservableObject {
 
     @Published var isTracking = false

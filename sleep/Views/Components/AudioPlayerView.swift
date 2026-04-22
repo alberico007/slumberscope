@@ -80,6 +80,19 @@ struct AudioPlayerView: View {
         )
     }
 
+    /// When the cloud classifier has returned a verdict, prefer its label
+    /// over the generic `AudioEventType.rawValue`. Keeps fallback behavior
+    /// identical for events without a remote label.
+    private var remoteLabel: String? {
+        let label = event.classification
+        guard !label.isEmpty,
+              !event.remoteClassificationPending,
+              label.lowercased() != "snoring" else {
+            return nil
+        }
+        return label
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // Play/Pause button
@@ -99,9 +112,20 @@ struct AudioPlayerView: View {
                     Image(systemName: eventType.icon)
                         .font(.caption)
                         .foregroundStyle(eventType.color)
-                    Text(eventType.rawValue)
+                    Text(remoteLabel ?? eventType.rawValue)
                         .font(.caption)
                         .fontWeight(.medium)
+                    if event.remoteClassificationPending {
+                        Image(systemName: "icloud.and.arrow.up")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .help("Waiting on cloud classifier")
+                    } else if event.remoteClassificationFailed {
+                        Image(systemName: "exclamationmark.icloud")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .help("Cloud classifier unavailable — showing local label")
+                    }
                     Spacer()
                     if !hasAudioFile {
                         Text("No recording")

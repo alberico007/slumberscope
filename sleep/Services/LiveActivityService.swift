@@ -11,6 +11,7 @@ import os
 // MARK: - LiveActivityService
 
 @Observable
+@MainActor
 final class LiveActivityService {
 
     // MARK: - Observable State
@@ -56,7 +57,7 @@ final class LiveActivityService {
     // MARK: - Update Activity
 
     func updateActivity(elapsed: TimeInterval, snoringCount: Int, phase: String) {
-        guard let activity = currentActivity else { return }
+        guard currentActivity != nil else { return }
 
         let updatedState = SleepTrackingAttributes.ContentState(
             elapsedSeconds: Int(elapsed),
@@ -66,15 +67,17 @@ final class LiveActivityService {
 
         let content = ActivityContent(state: updatedState, staleDate: nil)
 
-        Task {
-            await activity.update(content)
+        Task { @MainActor [weak self] in
+            guard let activity = self?.currentActivity else { return }
+            nonisolated(unsafe) let act = activity
+            await act.update(content)
         }
     }
 
     // MARK: - End Activity
 
     func endActivity() {
-        guard let activity = currentActivity else { return }
+        guard currentActivity != nil else { return }
         AppLogger.liveActivity.info("📱 Ending live activity")
 
         let finalState = SleepTrackingAttributes.ContentState(
@@ -85,11 +88,11 @@ final class LiveActivityService {
 
         let content = ActivityContent(state: finalState, staleDate: nil)
 
-        Task {
-            await activity.end(content, dismissalPolicy: .default)
-            await MainActor.run {
-                self.currentActivity = nil
-            }
+        Task { @MainActor [weak self] in
+            guard let activity = self?.currentActivity else { return }
+            nonisolated(unsafe) let act = activity
+            await act.end(content, dismissalPolicy: .default)
+            self?.currentActivity = nil
         }
     }
 

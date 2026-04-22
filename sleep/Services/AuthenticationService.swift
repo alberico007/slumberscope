@@ -12,6 +12,7 @@ import FirebaseFirestore
 import os
 
 @Observable
+@MainActor
 final class AuthenticationService {
 
     // MARK: - UserDefaults Keys

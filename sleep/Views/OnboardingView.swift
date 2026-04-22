@@ -8,7 +8,7 @@ import FirebaseAuth
 import FirebaseFirestore
 import MusicKit
 import os
-import SwiftUI
+@preconcurrency import SwiftUI
 
 // MARK: - OnboardingView
 
@@ -20,7 +20,7 @@ struct OnboardingView: View {
     @State private var isNewUser = false
     @State private var needsEmailVerification = false
     @State private var isTransitioning = false
-    private let totalPages = 8
+    private let totalPages = 7
 
     private let permissionService = PermissionService.shared
 
@@ -55,9 +55,11 @@ struct OnboardingView: View {
                 case 5:
                     MediaSetupPage { advance() }
                 case 6:
-                    FeatureShowcasePage { advance() }
-                case 7:
-                    InteractiveTutorialPage { onComplete() }
+                    // Final step — the animated feature showcase now closes
+                    // out onboarding. The interactive tutorial it used to
+                    // precede has been dissolved into the animation itself
+                    // (sensor callouts, morning review, AI coach moment).
+                    FeatureShowcasePage { onComplete() }
                 default:
                     EmptyView()
                 }
@@ -98,7 +100,11 @@ struct OnboardingView: View {
     private func shouldSkip(page: Int) -> Bool {
         switch page {
         case 2: return !needsEmailVerification  // VerifyEmailPage
-        case 3: return !isNewUser               // AccountSetupPage
+        // AccountSetupPage used to be skipped for returning Firebase users,
+        // which meant age was never collected on re-signs or when the first
+        // sign-in didn't capture it. Always show it — existing values are
+        // restored from Firestore into SleepSettings, so returning users
+        // just confirm & tap Continue.
         default: return false
         }
     }
@@ -140,11 +146,33 @@ private struct SplashPage: View {
     @State private var buttonOpacity: Double = 0
     @State private var pulseScale: CGFloat = 1.0
 
-    private let team = [
-        (name: "Simon Alberico", role: "Cyber Security", initials: "SA", colors: [Color.cyan, Color.blue]),
-        (name: "Aia Ahmed", role: "Software Engineering", initials: "AA", colors: [Color.purple, Color.pink]),
-        (name: "Ananjin Batdelger", role: "Computer Science", initials: "AB", colors: [Color.green, Color.teal])
+    private let team: [(name: String, role: String, initials: String, colors: [Color], imageName: String?, linkedIn: URL?)] = [
+        (
+            name: "Simon Alberico",
+            role: "Cyber Security",
+            initials: "SA",
+            colors: [Color.cyan, Color.blue],
+            imageName: "Simon",
+            linkedIn: URL(string: "https://www.linkedin.com/in/simon-alberico-0b2769329/")
+        ),
+        (
+            name: "Aia Ahmed",
+            role: "Computer Science",
+            initials: "AA",
+            colors: [Color.purple, Color.pink],
+            imageName: "Aia",
+            linkedIn: URL(string: "https://www.linkedin.com/in/aia-ahmed/")
+        ),
+        (
+            name: "Ananjin Batdelger",
+            role: "Software Engineering",
+            initials: "AB",
+            colors: [Color.green, Color.teal],
+            imageName: "Ana",
+            linkedIn: URL(string: "https://www.linkedin.com/in/anabatdelger/")
+        )
     ]
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         ScrollView {
@@ -185,26 +213,50 @@ private struct SplashPage: View {
                         .opacity(teamHeaderOpacity)
 
                     ForEach(Array(team.enumerated()), id: \.offset) { index, member in
-                        HStack(spacing: 14) {
-                            ZStack {
-                                Circle()
-                                    .fill(LinearGradient(colors: member.colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .frame(width: 44, height: 44)
-                                Text(member.initials)
-                                    .font(.subheadline).fontWeight(.bold).foregroundStyle(.white)
+                        Button {
+                            if let url = member.linkedIn { openURL(url) }
+                        } label: {
+                            HStack(spacing: 14) {
+                                Group {
+                                    if let imageName = member.imageName {
+                                        Image(imageName)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 44, height: 44)
+                                            .clipShape(Circle())
+                                            .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
+                                    } else {
+                                        ZStack {
+                                            Circle()
+                                                .fill(LinearGradient(colors: member.colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                                                .frame(width: 44, height: 44)
+                                            Text(member.initials)
+                                                .font(.subheadline).fontWeight(.bold).foregroundStyle(.white)
+                                        }
+                                    }
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(member.name).font(.subheadline).fontWeight(.semibold)
+                                    Text(member.role).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if member.linkedIn != nil {
+                                    Text("in")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 22, height: 22)
+                                        .background(Color(red: 0.04, green: 0.40, blue: 0.71))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                }
                             }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(member.name).font(.subheadline).fontWeight(.semibold)
-                                Text(member.role).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(.regularMaterial)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
-                        .padding(.horizontal, 16).padding(.vertical, 10)
-                        .background(.regularMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .buttonStyle(.plain)
+                        .disabled(member.linkedIn == nil)
                         .opacity(visibleMembers > index ? 1 : 0)
-                        .offset(y: visibleMembers > index ? 0 : 16)
-                        .animation(.spring(response: 0.45, dampingFraction: 0.75).delay(Double(index) * 0.15), value: visibleMembers)
+                        .animation(.easeIn(duration: 0.25).delay(Double(index) * 0.08), value: visibleMembers)
                     }
                 }
                 .padding(.horizontal, 32)
@@ -252,20 +304,32 @@ private struct AccountSetupPage: View {
     @State private var lastName = ""
     @State private var age: Int = 22
     @State private var goalHours: Double = 8.0
+    @State private var photoData: Data?
     @State private var titleOpacity: Double = 0
     @State private var contentOpacity: Double = 0
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable { case first, last }
 
+    private var initials: String {
+        let first = firstName.trimmingCharacters(in: .whitespaces).prefix(1)
+        let last = lastName.trimmingCharacters(in: .whitespaces).prefix(1)
+        return "\(first)\(last)"
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                Spacer(minLength: 50)
+                Spacer(minLength: 40)
 
-                Image(systemName: "person.crop.circle.badge.plus")
-                    .font(.system(size: 64))
-                    .foregroundStyle(LinearGradient(colors: [.cyan, .blue], startPoint: .top, endPoint: .bottom))
+                ProfilePhotoPicker(photoData: $photoData, size: 120, initials: initials)
+                    .opacity(titleOpacity)
+
+                Text("Add a photo so your doctor can recognize you on exported sleep reports")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
                     .opacity(titleOpacity)
 
                 Text("Create Your Profile")
@@ -299,23 +363,39 @@ private struct AccountSetupPage: View {
                 .padding(.horizontal, 32)
                 .opacity(contentOpacity)
 
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     Text("Age").font(.subheadline).fontWeight(.medium).foregroundStyle(.secondary)
-                    HStack(spacing: 24) {
-                        Button { if age > 13 { age -= 1; updateGoalForAge() } } label: {
-                            Image(systemName: "minus.circle.fill").font(.title).foregroundStyle(.secondary)
-                        }
-                        Text("\(age)")
-                            .font(.system(size: 48, weight: .bold, design: .rounded))
-                            .foregroundStyle(.cyan).frame(minWidth: 80)
-                        Button { if age < 100 { age += 1; updateGoalForAge() } } label: {
-                            Image(systemName: "plus.circle.fill").font(.title).foregroundStyle(.secondary)
-                        }
-                    }
-                    Text("Recommended: \(recommendedSleepLabel(forAge: age))")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text("\(age)")
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
+                        .foregroundStyle(.cyan)
+                        .contentTransition(.numericText(value: Double(age)))
+                        .animation(.snappy, value: age)
+                    Slider(
+                        value: Binding(
+                            get: { Double(age) },
+                            set: { newValue in
+                                let rounded = Int(newValue.rounded())
+                                if rounded != age {
+                                    age = rounded
+                                    updateGoalForAge()
+                                }
+                            }
+                        ),
+                        in: 13...100,
+                        step: 1
+                    )
+                    .tint(.cyan)
+                    .padding(.horizontal, 40)
                 }
+                .padding(.horizontal, 32)
                 .opacity(contentOpacity)
+
+                // Live sleep-hours feedback — reads the age stepper and
+                // shows the CDC/NSF-derived recommendation with a one-line
+                // rationale. Updates as the user taps +/−.
+                sleepFeedbackCard
+                    .padding(.horizontal, 32)
+                    .opacity(contentOpacity)
 
                 VStack(spacing: 8) {
                     Text("Your Sleep Goal").font(.subheadline).fontWeight(.medium).foregroundStyle(.secondary)
@@ -350,6 +430,7 @@ private struct AccountSetupPage: View {
             lastName = settings.userLastName
             age = settings.userAge > 0 ? settings.userAge : 22
             goalHours = recommendedSleepHours(forAge: age)
+            photoData = settings.userPhotoData
             withAnimation(.easeOut(duration: 0.4)) { titleOpacity = 1 }
             withAnimation(.easeOut(duration: 0.4).delay(0.2)) { contentOpacity = 1 }
         }
@@ -362,7 +443,41 @@ private struct AccountSetupPage: View {
         settings.userLastName = lastName
         settings.userAge = age
         settings.sleepGoalHours = goalHours
+        settings.userPhotoData = photoData
         authService.syncSettings(settings)
+    }
+
+    // MARK: - Sleep feedback card
+
+    private var sleepFeedbackCard: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "moon.stars.fill")
+                .font(.title2)
+                .foregroundStyle(
+                    LinearGradient(colors: [.indigo, .cyan],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+                .frame(width: 36)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("You need \(String(format: "%.1f", recommendedSleepHours(forAge: age))) hours/night")
+                    .font(.subheadline).fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                Text(recommendedSleepRationale(forAge: age))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(.indigo.opacity(0.25), lineWidth: 1)
+        )
+        .animation(.easeInOut(duration: 0.25), value: age)
     }
 }
 
@@ -1243,8 +1358,6 @@ private struct PermissionsPage: View {
     }
 }
 
-// MARK: - InteractiveTutorialPage
-
 // MARK: - MediaSetupPage
 
 private struct MediaSetupPage: View {
@@ -1283,34 +1396,26 @@ private struct MediaSetupPage: View {
                     .opacity(contentOpacity)
 
                 VStack(spacing: 14) {
-                    // Apple Music
+                    // Apple Music — toggling on triggers Apple's system auth
+                    // prompt. Roll back if the user declines.
                     mediaRow(
                         icon: "music.note",
                         iconColor: .red,
                         title: "Apple Music",
                         subtitle: appleMusicAuthorized
                             ? "Connected — you can pick songs or playlists"
-                            : "Connect to pick songs and playlists at bedtime",
-                        isOn: $settings.appleMusicEnabled,
-                        trailing: {
-                            AnyView(
-                                Group {
-                                    if settings.appleMusicEnabled && !appleMusicAuthorized {
-                                        Button {
-                                            Task { await authorizeAppleMusic() }
-                                        } label: {
-                                            Text(isRequestingAppleMusic ? "…" : "Connect")
-                                                .font(.caption).fontWeight(.semibold)
-                                                .padding(.horizontal, 12).padding(.vertical, 6)
-                                                .background(Color.red.opacity(0.15))
-                                                .foregroundStyle(.red)
-                                                .clipShape(Capsule())
-                                        }
-                                        .disabled(isRequestingAppleMusic)
-                                    }
+                            : "Toggle on to pick songs and playlists at bedtime",
+                        isOn: Binding(
+                            get: { settings.appleMusicEnabled },
+                            set: { newValue in
+                                if newValue && !settings.appleMusicEnabled {
+                                    Task { await authorizeAppleMusic() }
+                                } else {
+                                    settings.appleMusicEnabled = newValue
                                 }
-                            )
-                        }
+                            }
+                        ),
+                        trailing: { AnyView(EmptyView()) }
                     )
 
                     // Podcasts
@@ -1378,198 +1483,10 @@ private struct MediaSetupPage: View {
         defer { isRequestingAppleMusic = false }
         let status = await mediaService.requestAppleMusicAuthorization()
         appleMusicAuthorized = status == .authorized
-    }
-}
-
-private struct InteractiveTutorialPage: View {
-
-    let onComplete: () -> Void
-
-    @Environment(SleepSettings.self) private var settings
-    @State private var tutorialStep = 0
-    @State private var stepOpacity: Double = 0
-    @State private var phoneOffset: CGFloat = 50
-    @State private var mockTracking = false
-    @State private var mockScore: Double = 0
-
-    private let totalSteps = 4
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Spacer()
-                Button("Skip Tutorial") { onComplete() }
-                    .font(.subheadline).foregroundStyle(.secondary)
-                    .padding(.trailing, 24).padding(.top, 16)
-            }
-
-            Spacer()
-
-            Group {
-                switch tutorialStep {
-                case 0: placementStep
-                case 1: trackingStep
-                case 2: resultsStep
-                case 3: aiStep
-                default: EmptyView()
-                }
-            }
-            .opacity(stepOpacity)
-            .transition(.asymmetric(
-                insertion: .move(edge: .trailing).combined(with: .opacity),
-                removal: .move(edge: .leading).combined(with: .opacity)
-            ))
-            .animation(.easeInOut(duration: 0.3), value: tutorialStep)
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                ForEach(0..<totalSteps, id: \.self) { i in
-                    Circle()
-                        .fill(i == tutorialStep ? Color.cyan : Color.secondary.opacity(0.3))
-                        .frame(width: 8, height: 8)
-                }
-            }
-            .padding(.bottom, 16)
-
-            PrimaryButton(title: tutorialStep < totalSteps - 1 ? "Next" : "Start Sleeping Better") {
-                if tutorialStep < totalSteps - 1 {
-                    withAnimation { stepOpacity = 0 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        tutorialStep += 1
-                        withAnimation(.easeOut(duration: 0.3)) { stepOpacity = 1 }
-                    }
-                } else {
-                    onComplete()
-                }
-            }
-            .padding(.horizontal, 32).padding(.bottom, 40)
-        }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.4)) { stepOpacity = 1 }
-        }
-    }
-
-    private var placementStep: some View {
-        VStack(spacing: 20) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(LinearGradient(colors: [.indigo.opacity(0.3), .purple.opacity(0.2)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 260, height: 140)
-                Capsule().fill(.white.opacity(0.15)).frame(width: 100, height: 50).offset(x: -60, y: -10)
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(LinearGradient(colors: [.cyan.opacity(0.8), .blue.opacity(0.6)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 35, height: 65)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.3), lineWidth: 1))
-                    .offset(x: 20, y: phoneOffset > 0 ? phoneOffset : 0)
-                    .shadow(color: .cyan.opacity(0.4), radius: 8)
-            }
-            .onAppear {
-                withAnimation(.spring(response: 0.8, dampingFraction: 0.6).delay(0.3)) { phoneOffset = 0 }
-            }
-
-            Text("Place Your Phone").font(.title2).fontWeight(.bold)
-
-            VStack(alignment: .leading, spacing: 12) {
-                TutorialBullet(icon: "bed.double.fill", color: .indigo, text: "Place on mattress near your pillow")
-                TutorialBullet(icon: "iphone.gen3", color: .cyan, text: "Keep face down to reduce light")
-                TutorialBullet(icon: "battery.100.bolt", color: .green, text: "Plug in or ensure good charge")
-                TutorialBullet(icon: "mic.fill", color: .yellow, text: "Keep microphone unobstructed")
-            }
-            .padding(.horizontal, 40)
-        }
-    }
-
-    private var trackingStep: some View {
-        VStack(spacing: 20) {
-            ZStack {
-                Circle().stroke(.cyan.opacity(0.2), lineWidth: 3).frame(width: 160, height: 160)
-                Circle()
-                    .trim(from: 0, to: mockTracking ? 0.7 : 0)
-                    .stroke(
-                        LinearGradient(colors: [.cyan, .blue], startPoint: .top, endPoint: .bottom),
-                        style: StrokeStyle(lineWidth: 6, lineCap: .round)
-                    )
-                    .frame(width: 160, height: 160).rotationEffect(.degrees(-90))
-                VStack(spacing: 4) {
-                    Image(systemName: "moon.zzz.fill").font(.system(size: 32)).foregroundStyle(.cyan)
-                    Text(mockTracking ? "Tracking..." : "Ready").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .onAppear {
-                withAnimation(.easeInOut(duration: 2.0).delay(0.5)) { mockTracking = true }
-            }
-
-            Text("Sleep Tracking").font(.title2).fontWeight(.bold)
-            Text("Tap \"Track\" to start recording. Slumberscope monitors your movement, audio, and sleep stages throughout the night.")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).padding(.horizontal, 40)
-        }
-    }
-
-    private var resultsStep: some View {
-        VStack(spacing: 20) {
-            ZStack {
-                Circle().stroke(.secondary.opacity(0.2), lineWidth: 8).frame(width: 140, height: 140)
-                Circle()
-                    .trim(from: 0, to: mockScore)
-                    .stroke(
-                        LinearGradient(colors: [.green, .cyan], startPoint: .top, endPoint: .bottom),
-                        style: StrokeStyle(lineWidth: 8, lineCap: .round)
-                    )
-                    .frame(width: 140, height: 140).rotationEffect(.degrees(-90))
-                VStack(spacing: 2) {
-                    Text("\(Int(mockScore * 100))").font(.system(size: 40, weight: .bold, design: .rounded))
-                    Text("Sleep Score").font(.caption2).foregroundStyle(.secondary)
-                }
-            }
-            .onAppear {
-                withAnimation(.easeOut(duration: 1.5).delay(0.3)) { mockScore = 0.85 }
-            }
-
-            Text("Morning Review").font(.title2).fontWeight(.bold)
-            Text("Each morning you'll get a sleep score, detailed breakdown of your sleep stages, snoring events, and personalized tips.")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).padding(.horizontal, 40)
-
-            HStack(spacing: 24) {
-                MockStat(label: "Deep", value: "1h 42m", color: .indigo)
-                MockStat(label: "REM", value: "2h 05m", color: .cyan)
-                MockStat(label: "Snoring", value: "12 min", color: .orange)
-            }
-        }
-    }
-
-    private var aiStep: some View {
-        VStack(spacing: 20) {
-            @Bindable var settings = settings
-
-            Image(systemName: "brain.head.profile.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(LinearGradient(colors: [.purple, .pink], startPoint: .top, endPoint: .bottom))
-
-            Text("AI Sleep Coach").font(.title2).fontWeight(.bold)
-
-            if #available(iOS 26, *) {
-                Text("Your device supports Apple Intelligence! Get personalized insights powered by on-device AI.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).padding(.horizontal, 40)
-                Toggle("Enable AI Coaching", isOn: $settings.aiCoachingEnabled).padding(.horizontal, 40)
-                HStack(spacing: 8) {
-                    Image(systemName: "lock.shield.fill").foregroundStyle(.green)
-                    Text("All AI runs on-device. No data leaves your phone.").font(.caption).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 40)
-            } else {
-                Text("AI coaching requires iPhone 15 Pro or newer. You'll still get rule-based sleep tips and insights.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).padding(.horizontal, 40)
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("Rule-based coaching is enabled by default.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
+        // Only commit the user-visible toggle if Apple actually authorized us.
+        // Otherwise the Binding stays off and the user sees no "on" state for
+        // something that wouldn't actually work.
+        settings.appleMusicEnabled = appleMusicAuthorized
     }
 }
 
@@ -1586,32 +1503,6 @@ private struct PrimaryButton: View {
                 .background(LinearGradient(colors: [.cyan, .blue], startPoint: .leading, endPoint: .trailing))
                 .foregroundStyle(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
-        }
-    }
-}
-
-private struct TutorialBullet: View {
-    let icon: String
-    let color: Color
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.body).foregroundStyle(color).frame(width: 32)
-            Text(text).font(.subheadline).foregroundStyle(.secondary)
-        }
-    }
-}
-
-private struct MockStat: View {
-    let label: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(value).font(.subheadline).fontWeight(.bold).foregroundStyle(color)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
         }
     }
 }
@@ -1649,164 +1540,519 @@ private struct PermissionRow: View {
 
 private struct FeatureShowcasePage: View {
 
-    let onContinue: () -> Void
+    let onContinue: @MainActor () -> Void
 
-    @State private var headerOpacity: Double = 0
-    @State private var cardsVisible: Int = 0
-    @State private var pulseScale: CGFloat = 1.0
+    // MARK: - Animation state
+    //
+    // A single Equatable struct holds every property that the keyframeAnimator
+    // drives. Each track below operates on a \.keyPath of this type, so all
+    // properties animate in parallel from a single timeline — no chained
+    // Task.sleep + withAnimation blocks.
 
-    private struct Feature: Identifiable {
-        let id = UUID()
-        let icon: String
-        let title: String
-        let tagline: String
-        let detail: String
-        let color: Color
+    fileprivate struct AnimState: Equatable {
+        var sceneOpacity: Double = 0
+        var cameraScale: CGFloat = 1.0
+        var cameraOffsetY: CGFloat = 0
+        var waveformProgress: Double = 0
+        var dawnProgress: Double = 0
+        var micOpacity: Double = 0
+        var motionOpacity: Double = 0
+        var proximityOpacity: Double = 0
+        var scoreScale: CGFloat = 0.7
+        var scoreOpacity: Double = 0
+        var coachScale: CGFloat = 0.7
+        var coachOpacity: Double = 0
+        var captionStep: Double = 0   // 0..6, rounded → index into captionStrings
+        var endCardOpacity: Double = 0
     }
 
-    private let features: [Feature] = [
-        Feature(
-            icon: "applewatch.radiowaves.left.and.right",
-            title: "Works with Apple Watch",
-            tagline: "Real heart rate + HRV, not just estimates",
-            detail: "If you wear your Apple Watch, Slumberscope uses its sleep stages, HRV, blood oxygen, and resting heart rate. Apple's HRV readings are within 10 ms of clinical ECG.",
-            color: .red
-        ),
-        Feature(
-            icon: "waveform.badge.magnifyingglass",
-            title: "Smart noise filtering",
-            tagline: "Your fan is not snoring",
-            detail: "On-device sound classification detects fans, air conditioners, dogs, and speech so they never get counted as snoring events. No other sleep app does this.",
-            color: .cyan
-        ),
-        Feature(
-            icon: "music.note.list",
-            title: "Fall asleep to your own stuff",
-            tagline: "Apple Music + Podcasts built in",
-            detail: "Pick a playlist from your library or search any podcast. Set a sleep timer. We will not count our own audio as snoring while it plays.",
-            color: .pink
-        ),
-        Feature(
-            icon: "sparkles",
-            title: "Apple Intelligence coach",
-            tagline: "Personalized tips from your actual data",
-            detail: "Morning summaries and coaching run on Apple's on-device language model. Nothing leaves your phone. References your sleep score, HRV, and patterns directly.",
-            color: .purple
-        ),
-        Feature(
-            icon: "alarm.waves.left.and.right.fill",
-            title: "Smart alarm",
-            tagline: "Wake during light sleep",
-            detail: "Set a wake window. We watch your motion (and Apple Watch stages when present) and ring the alarm the moment you drift into light sleep inside that window.",
-            color: .orange
-        ),
-        Feature(
-            icon: "square.and.arrow.up",
-            title: "Share your night",
-            tagline: "One-tap story card",
-            detail: "After every session, tap share to post a beautifully rendered sleep card to Instagram, TikTok, or wherever you share. Good sleep is worth celebrating.",
-            color: .indigo
-        )
+    /// Replay counter held in a Sendable observable so the keyframeAnimator's
+    /// `@Sendable` content closure can capture it without violating Swift 6
+    /// strict concurrency. `@unchecked Sendable` is safe here because every
+    /// mutation happens via the dispatch wrapper below (always on MainActor).
+    @Observable
+    fileprivate final class ReplayTrigger: @unchecked Sendable {
+        var tick: Int = 0
+    }
+
+    @State private var trigger = ReplayTrigger()
+
+    var body: some View {
+        // The keyframeAnimator content closure is @Sendable. To satisfy
+        // Swift 6 strict concurrency we wrap onContinue + onReplay into
+        // local @Sendable closures that dispatch back to MainActor — that
+        // way nothing the closure captures crosses an actor boundary.
+        let sendableContinue: @Sendable () -> Void = { [onContinue] in
+            Task { @MainActor in onContinue() }
+        }
+        let trigger = self.trigger // local capture; ReplayTrigger is Sendable
+        let sendableReplay: @Sendable () -> Void = {
+            Task { @MainActor in trigger.tick += 1 }
+        }
+
+        return Color.clear
+            .keyframeAnimator(initialValue: AnimState(), trigger: trigger.tick) { _, s in
+                AnimatedScene(
+                    state: s,
+                    onContinue: sendableContinue,
+                    onReplay: sendableReplay
+                )
+            } keyframes: { _ in
+                // Scene-wide opacity: instant fade in over first 0.9s
+                KeyframeTrack(\.sceneOpacity) {
+                    LinearKeyframe(0, duration: 0.0)
+                    CubicKeyframe(1.0, duration: 0.9)
+                }
+
+                // Camera zoom — hold 1.2s, then ease to 2.15x over 2s
+                KeyframeTrack(\.cameraScale) {
+                    LinearKeyframe(1.0, duration: 1.2)
+                    CubicKeyframe(2.15, duration: 2.0)
+                }
+                KeyframeTrack(\.cameraOffsetY) {
+                    LinearKeyframe(0, duration: 1.2)
+                    CubicKeyframe(30, duration: 2.0)
+                }
+
+                // Callouts — each springs in after the zoom settles, then
+                // fades out as morning arrives
+                KeyframeTrack(\.micOpacity) {
+                    LinearKeyframe(0, duration: 3.2)
+                    SpringKeyframe(1.0, duration: 0.5, spring: .bouncy)
+                    LinearKeyframe(1.0, duration: 3.3)
+                    LinearKeyframe(0, duration: 0.8)
+                }
+                KeyframeTrack(\.motionOpacity) {
+                    LinearKeyframe(0, duration: 3.7)
+                    SpringKeyframe(1.0, duration: 0.5, spring: .bouncy)
+                    LinearKeyframe(1.0, duration: 2.8)
+                    LinearKeyframe(0, duration: 0.8)
+                }
+                KeyframeTrack(\.proximityOpacity) {
+                    LinearKeyframe(0, duration: 4.2)
+                    SpringKeyframe(1.0, duration: 0.5, spring: .bouncy)
+                    LinearKeyframe(1.0, duration: 2.3)
+                    LinearKeyframe(0, duration: 0.8)
+                }
+
+                // Waveform drawing across the phone screen (tracking)
+                KeyframeTrack(\.waveformProgress) {
+                    LinearKeyframe(0, duration: 5.2)
+                    CubicKeyframe(1.0, duration: 1.3)
+                }
+
+                // Morning gradient (night → dawn cross-fade)
+                KeyframeTrack(\.dawnProgress) {
+                    LinearKeyframe(0, duration: 6.5)
+                    CubicKeyframe(1.0, duration: 1.5)
+                }
+
+                // Score card spring-pops in during morning
+                KeyframeTrack(\.scoreOpacity) {
+                    LinearKeyframe(0, duration: 7.0)
+                    SpringKeyframe(1.0, duration: 0.6, spring: .bouncy)
+                }
+                KeyframeTrack(\.scoreScale) {
+                    LinearKeyframe(0.7, duration: 7.0)
+                    SpringKeyframe(1.0, duration: 0.6, spring: .bouncy)
+                }
+
+                // Coach bubble
+                KeyframeTrack(\.coachOpacity) {
+                    LinearKeyframe(0, duration: 8.5)
+                    SpringKeyframe(1.0, duration: 0.6, spring: .bouncy)
+                }
+                KeyframeTrack(\.coachScale) {
+                    LinearKeyframe(0.7, duration: 8.5)
+                    SpringKeyframe(1.0, duration: 0.6, spring: .bouncy)
+                }
+
+                // Caption index — instant jumps at stage boundaries
+                KeyframeTrack(\.captionStep) {
+                    LinearKeyframe(0, duration: 1.2)
+                    MoveKeyframe(1)
+                    LinearKeyframe(1, duration: 2.0)
+                    MoveKeyframe(2)
+                    LinearKeyframe(2, duration: 2.0)
+                    MoveKeyframe(3)
+                    LinearKeyframe(3, duration: 1.3)
+                    MoveKeyframe(4)
+                    LinearKeyframe(4, duration: 2.5)
+                    MoveKeyframe(5)
+                    LinearKeyframe(5, duration: 2.3)
+                    MoveKeyframe(6)
+                }
+
+                // End card cross-fade at the end
+                KeyframeTrack(\.endCardOpacity) {
+                    LinearKeyframe(0, duration: 10.8)
+                    CubicKeyframe(1.0, duration: 0.5)
+                }
+            }
+            // The `trigger:` variant of keyframeAnimator only plays on
+            // *changes* to the trigger — on first appear it sits at initial
+            // values (all opacities 0 → black screen). Bump the trigger once
+            // after the view appears so the timeline starts.
+            .onAppear {
+                if trigger.tick == 0 { trigger.tick = 1 }
+            }
+    }
+
+}
+
+// MARK: - AnimatedScene
+//
+// Separate View struct so it can be instantiated from keyframeAnimator's
+// @Sendable content closure (View struct init is always nonisolated).
+
+private struct AnimatedScene: View {
+
+    let state: FeatureShowcasePage.AnimState
+    // Sendable closures so this struct can be constructed inside a
+    // keyframeAnimator's @Sendable content closure under Swift 6.
+    let onContinue: @Sendable () -> Void
+    let onReplay: @Sendable () -> Void
+
+    private static let captionStrings = [
+        "You place your phone down…",                  // 0
+        "…and it keeps watch.",                         // 1
+        "Three sensors. One quiet night.",              // 2
+        "Listening. Measuring. Learning.",              // 3
+        "A score waiting for you in the morning.",      // 4
+        "An AI coach, on by default.",                  // 5
+        ""                                              // 6
+    ]
+
+    // Star field — (x, y, size, baseAlpha, phaseOffset). Phase offset gives
+    // each star its own twinkle cycle inside TimelineView.
+    private let stars: [(x: CGFloat, y: CGFloat, size: CGFloat, alpha: Double, phase: Double)] = [
+        (30, 40, 2.0, 0.80, 0.0), (80, 25, 1.5, 0.60, 0.7),
+        (180, 30, 2.5, 0.90, 1.4), (250, 50, 1.0, 0.50, 2.1),
+        (320, 20, 2.0, 0.70, 2.8), (130, 60, 1.2, 0.40, 3.5),
+        (200, 45, 1.8, 0.85, 4.2), (280, 70, 1.5, 0.55, 4.9),
+        (50, 80, 1.0, 0.50, 5.6), (350, 90, 1.5, 0.70, 6.3),
+        (360, 130, 1.2, 0.50, 0.3), (20, 110, 1.6, 0.60, 1.1)
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                Spacer(minLength: 40)
+        ZStack {
+            scene
+                .opacity(1 - state.endCardOpacity)
+                .allowsHitTesting(state.endCardOpacity < 0.5)
+                .contentShape(Rectangle())
+                // Triple-tap anywhere on the animation skips straight to the
+                // next onboarding step. The endCard layer below absorbs taps
+                // once it fades in, so this only fires during playback.
+                .onTapGesture(count: 3) { onContinue() }
+                .overlay(alignment: .bottom) { skipHint }
 
-                // Animated header
-                VStack(spacing: 12) {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .font(.system(size: 56))
-                        .foregroundStyle(
-                            LinearGradient(colors: [.cyan, .indigo, .purple], startPoint: .leading, endPoint: .trailing)
-                        )
-                        .scaleEffect(pulseScale)
-                    Text("What makes Slumberscope different")
-                        .font(.title2).fontWeight(.bold)
-                        .multilineTextAlignment(.center)
-                    Text("A quick tour of the features you might not know about")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                }
-                .opacity(headerOpacity)
-                .padding(.bottom, 4)
-
-                // Feature cards — each reveals with a small delay
-                ForEach(Array(features.enumerated()), id: \.element.id) { index, feature in
-                    FeatureCard(feature: feature)
-                        .opacity(index < cardsVisible ? 1 : 0)
-                        .offset(y: index < cardsVisible ? 0 : 20)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: cardsVisible)
-                }
-
-                Spacer(minLength: 16)
-
-                PrimaryButton(title: "Let's go") { onContinue() }
-                    .padding(.horizontal, 32)
-                    .opacity(headerOpacity)
-
-                Spacer(minLength: 30)
-            }
-            .padding(.horizontal, 16)
+            endCard
+                .opacity(state.endCardOpacity)
+                .allowsHitTesting(state.endCardOpacity > 0.5)
         }
-        .scrollIndicators(.hidden)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.4)) { headerOpacity = 1 }
-            withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                pulseScale = 1.08
+    }
+
+    // MARK: - Skip hint
+    //
+    // Tiny caption at the bottom edge during the first few seconds so users
+    // know the triple-tap gesture is available. Fades in with the scene and
+    // out once the callouts start appearing (~3.5 s in).
+
+    private var skipHint: some View {
+        let hintFade = min(state.sceneOpacity, max(0, 1 - state.micOpacity - state.motionOpacity))
+        return Text("Triple-tap anywhere to skip")
+            .font(.caption2)
+            .foregroundStyle(.white.opacity(0.45))
+            .padding(.bottom, 24)
+            .opacity(hintFade)
+            .animation(.easeInOut(duration: 0.3), value: hintFade)
+            .allowsHitTesting(false)
+    }
+
+    // MARK: - Scene
+
+    private var scene: some View {
+        VStack {
+            Spacer(minLength: 50)
+
+            ZStack {
+                // The "camera" group: night + stars + bed + phone share a
+                // single scale/offset so the zoom feels like one motion.
+                ZStack {
+                    night
+                    starField(dawnFade: 1 - state.dawnProgress)
+                    bedAndPhone(waveformProgress: state.waveformProgress)
+                }
+                .scaleEffect(state.cameraScale, anchor: .center)
+                .offset(y: state.cameraOffsetY)
+                .frame(maxWidth: .infinity)
+                .frame(height: 360)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 24))
+                // Vignette: radial fade to black at the edges for a
+                // cinematic letterbox feel.
+                .overlay(
+                    RadialGradient(
+                        colors: [.clear, .black.opacity(0.60)],
+                        center: .center,
+                        startRadius: 140,
+                        endRadius: 300
+                    )
+                    .allowsHitTesting(false)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                )
+
+                // Callouts render unscaled on top of the zoomed scene
+                calloutBubble(symbol: "mic.fill", title: "Microphone", color: .cyan)
+                    .opacity(state.micOpacity)
+                    .scaleEffect(0.6 + 0.4 * state.micOpacity)
+                    .position(x: 70, y: 295)
+                calloutBubble(symbol: "gyroscope", title: "Motion sensors", color: .purple)
+                    .opacity(state.motionOpacity)
+                    .scaleEffect(0.6 + 0.4 * state.motionOpacity)
+                    .position(x: 300, y: 185)
+                calloutBubble(symbol: "sensor.fill", title: "Proximity", color: .orange)
+                    .opacity(state.proximityOpacity)
+                    .scaleEffect(0.6 + 0.4 * state.proximityOpacity)
+                    .position(x: 85, y: 90)
+
+                scoreCard
+                    .opacity(state.scoreOpacity)
+                    .scaleEffect(state.scoreScale)
+                    .position(x: 190, y: 120)
+
+                coachBubble
+                    .opacity(state.coachOpacity)
+                    .scaleEffect(state.coachScale)
+                    .position(x: 190, y: 275)
             }
-            // Stagger the card reveals.
-            for index in features.indices {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 + Double(index) * 0.15) {
-                    cardsVisible = index + 1
+            .frame(height: 360)
+
+            Spacer(minLength: 20)
+
+            Text(Self.captionStrings[captionIndex])
+                .font(.title3).fontWeight(.semibold)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+                .opacity(state.sceneOpacity)
+                .animation(.easeInOut(duration: 0.35), value: captionIndex)
+
+            Spacer(minLength: 40)
+        }
+        .opacity(state.sceneOpacity)
+        .padding(.horizontal, 20)
+    }
+
+    private var captionIndex: Int {
+        let rounded = Int(state.captionStep.rounded())
+        return max(0, min(Self.captionStrings.count - 1, rounded))
+    }
+
+    private var night: some View {
+        // Cross-fade night → dawn by stacking with opacity.
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.96, green: 0.55, blue: 0.50),
+                    Color(red: 0.45, green: 0.28, blue: 0.52)
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            LinearGradient(
+                colors: [
+                    Color(red: 0.04, green: 0.05, blue: 0.15),
+                    .black
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            .opacity(1 - state.dawnProgress)
+        }
+    }
+
+    // MARK: - TimelineView-driven continuous effects
+    //
+    // Stars twinkle and the phone screen glow breathes off a wall clock, so
+    // they keep moving regardless of keyframe timing and reset cleanly on
+    // replay (no leftover repeatForever animations to unwind).
+
+    private func starField(dawnFade: Double) -> some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            ZStack {
+                ForEach(stars.indices, id: \.self) { i in
+                    let wave = 0.5 + 0.5 * sin(t * 1.3 + stars[i].phase)
+                    let twinkle = 0.35 + 0.65 * wave
+                    Circle()
+                        .fill(.white.opacity(stars[i].alpha * twinkle * dawnFade))
+                        .frame(width: stars[i].size, height: stars[i].size)
+                        .position(x: stars[i].x, y: stars[i].y)
                 }
             }
         }
     }
 
-    // MARK: - FeatureCard
+    // MARK: - Morning card + coach bubble
 
-    private struct FeatureCard: View {
-        let feature: Feature
-
-        var body: some View {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: feature.icon)
-                    .font(.title2)
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(
-                        LinearGradient(
-                            colors: [feature.color, feature.color.opacity(0.7)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        )
+    private var scoreCard: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.2), lineWidth: 3)
+                    .frame(width: 34, height: 34)
+                Circle()
+                    .trim(from: 0, to: 0.85)
+                    .stroke(
+                        LinearGradient(colors: [.green, .cyan],
+                                       startPoint: .top, endPoint: .bottom),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(feature.title)
-                        .font(.headline)
-                    Text(feature.tagline)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(feature.color)
-                    Text(feature.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 2)
-                }
-                Spacer(minLength: 0)
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 34, height: 34)
+                Text("85").font(.caption).fontWeight(.bold)
+                    .foregroundStyle(.white)
             }
-            .padding(14)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(feature.color.opacity(0.15), lineWidth: 1)
-            )
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Sleep Score").font(.caption2).foregroundStyle(.white.opacity(0.8))
+                Text("Great recovery").font(.caption2).fontWeight(.semibold)
+                    .foregroundStyle(.green)
+            }
         }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.5), radius: 10)
+    }
+
+    private var coachBubble: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "brain.head.profile.fill")
+                .foregroundStyle(
+                    LinearGradient(colors: [.pink, .purple],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+                .font(.callout)
+            Text("Rest well — HRV up 8%.")
+                .font(.caption2).fontWeight(.medium)
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(.purple.opacity(0.6), lineWidth: 1))
+        .shadow(color: .purple.opacity(0.3), radius: 8)
+    }
+
+    private func bedAndPhone(waveformProgress: Double) -> some View {
+        VStack(spacing: 0) {
+            Spacer()
+            ZStack {
+                RoundedRectangle(cornerRadius: 32)
+                    .fill(LinearGradient(colors: [Color(white: 0.92), Color(white: 0.72)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(width: 260, height: 90)
+                    .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
+
+                phone(waveformProgress: waveformProgress).offset(y: -36)
+            }
+            Rectangle()
+                .fill(Color(red: 0.18, green: 0.10, blue: 0.22))
+                .frame(height: 80)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
+                }
+        }
+    }
+
+    private func phone(waveformProgress: Double) -> some View {
+        TimelineView(.animation) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            let pulse = 1.0 + 0.035 * sin(t * .pi * 1.4)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 22)
+                    .fill(Color(white: 0.10))
+                    .frame(width: 92, height: 162)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22)
+                            .stroke(.white.opacity(0.22), lineWidth: 1)
+                    )
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(LinearGradient(colors: [Color(red: 0.05, green: 0.06, blue: 0.15), .black],
+                                         startPoint: .top, endPoint: .bottom))
+                    .frame(width: 80, height: 150)
+
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundStyle(
+                        LinearGradient(colors: [.cyan, .indigo], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .frame(width: 72, height: 40)
+                    .mask(
+                        HStack(spacing: 0) {
+                            Rectangle().frame(width: 72 * waveformProgress)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(width: 72, height: 40)
+                    )
+            }
+            .shadow(color: .cyan.opacity(0.30 * pulse), radius: 20 * pulse)
+            .scaleEffect(pulse)
+        }
+    }
+
+    private func calloutBubble(symbol: String, title: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .font(.caption)
+            Text(title)
+                .font(.caption2).fontWeight(.semibold)
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(color.opacity(0.7), lineWidth: 1))
+        .shadow(color: color.opacity(0.3), radius: 6)
+    }
+
+    // MARK: - End card
+
+    private var endCard: some View {
+        VStack(spacing: 16) {
+            Spacer(minLength: 60)
+            Image(systemName: "moon.stars.fill")
+                .font(.system(size: 56))
+                .foregroundStyle(
+                    LinearGradient(colors: [.cyan, .indigo, .purple],
+                                   startPoint: .leading, endPoint: .trailing)
+                )
+            Text("What makes Slumberscope different")
+                .font(.title2).fontWeight(.bold)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+            Text("Your phone becomes a sleep lab.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+
+            Spacer(minLength: 20)
+
+            PrimaryButton(title: "Let's go") { onContinue() }
+                .padding(.horizontal, 32)
+
+            Button {
+                onReplay()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.clockwise")
+                    Text("Replay Animation")
+                }
+            }
+            .font(.subheadline).foregroundStyle(.secondary)
+            .padding(.bottom, 30)
+        }
+        .padding(.horizontal, 16)
     }
 }

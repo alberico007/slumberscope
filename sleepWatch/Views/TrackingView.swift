@@ -12,15 +12,18 @@ struct TrackingView: View {
     @EnvironmentObject var heartRateService: HeartRateService
     @EnvironmentObject var sessionManager: WatchSessionManager
     @EnvironmentObject var watchMotionService: WatchMotionService
+    @EnvironmentObject var watchAudioService: WatchAudioService
     @State private var elapsed: TimeInterval = 0
     @State private var timer: Timer?
     @State private var recentHR: [(Date, Double)] = []
     @State private var showingStopConfirmation = false
 
     private var elapsedFormatted: String {
-        let h = Int(elapsed) / 3600
-        let m = (Int(elapsed) % 3600) / 60
-        return String(format: "%d:%02d", h, m)
+        let total = Int(elapsed)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        return String(format: "%d:%02d:%02d", h, m, s)
     }
 
     private var movementColor: Color {
@@ -48,7 +51,7 @@ struct TrackingView: View {
                     .foregroundStyle(.white)
                     .monospacedDigit()
 
-                Text("hrs : min")
+                Text("hrs : min : sec")
                     .font(.system(.caption2, design: .rounded))
                     .foregroundStyle(.secondary)
 
@@ -110,23 +113,43 @@ struct TrackingView: View {
                 }
                 .padding(.horizontal, 8)
 
-                // Snoring count
-                HStack(spacing: 4) {
-                    Image(systemName: "waveform")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if sessionManager.snoringCount > 0 {
-                        Text("\(sessionManager.snoringCount) snoring event\(sessionManager.snoringCount == 1 ? "" : "s")")
-                            .font(.system(.caption2, design: .rounded))
-                            .foregroundStyle(.orange)
-                    } else {
-                        Text("No snoring")
+                // Classified sound events, grouped by bucket (matches iPhone)
+                let bucketCounts = Self.bucketCounts(
+                    watchEvents: watchAudioService.recentEvents,
+                    phoneSnoringCount: sessionManager.snoringCount
+                )
+                if bucketCounts.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "waveform")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("No sounds detected")
                             .font(.system(.caption2, design: .rounded))
                             .foregroundStyle(.secondary)
+                        Spacer()
                     }
-                    Spacer()
+                    .padding(.horizontal, 8)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(bucketCounts, id: \.bucket) { entry in
+                            HStack(spacing: 6) {
+                                Image(systemName: entry.bucket.icon)
+                                    .font(.caption2)
+                                    .foregroundStyle(entry.bucket.tint)
+                                    .frame(width: 14)
+                                Text(entry.bucket.displayName)
+                                    .font(.system(.caption2, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.85))
+                                Spacer()
+                                Text("\(entry.count)")
+                                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(entry.bucket.tint)
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
                 }
-                .padding(.horizontal, 8)
 
                 Divider().background(Color.white.opacity(0.15)).padding(.horizontal, 12)
 
@@ -154,8 +177,8 @@ struct TrackingView: View {
         }
         .onAppear {
             elapsed = Date().timeIntervalSince(startTime)
-            // Update elapsed time every 30 seconds (sufficient for sleep tracking display)
-            timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+            // Tick every second so the seconds place updates live.
+            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 DispatchQueue.main.async {
                     elapsed = Date().timeIntervalSince(startTime)
                 }
@@ -171,6 +194,28 @@ struct TrackingView: View {
             if recentHR.count > 15 {
                 recentHR.removeFirst(recentHR.count - 15)
             }
+        }
+    }
+
+    /// Merge the watch's on-device/YAMNet events with the snoring count
+    /// forwarded from the iPhone, then group by WatchEventBucket. iPhone-side
+    /// snoring events arrive as a count (no labels), so add them to the
+    /// Snoring bucket minus any snoring the watch already detected locally.
+    static func bucketCounts(
+        watchEvents: [WatchClassifiedEvent],
+        phoneSnoringCount: Int
+    ) -> [(bucket: WatchEventBucket, count: Int)] {
+        var counts: [WatchEventBucket: Int] = [:]
+        for e in watchEvents {
+            counts[WatchEventBucket.classify(e.label), default: 0] += 1
+        }
+        let localSnore = counts[.snoring] ?? 0
+        if phoneSnoringCount > localSnore {
+            counts[.snoring] = phoneSnoringCount
+        }
+        return WatchEventBucket.allCases.compactMap { bucket in
+            guard let c = counts[bucket], c > 0 else { return nil }
+            return (bucket, c)
         }
     }
 }

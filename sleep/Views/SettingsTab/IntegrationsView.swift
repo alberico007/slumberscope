@@ -2,7 +2,6 @@
 //  IntegrationsView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import SwiftUI
@@ -36,21 +35,35 @@ struct IntegrationsView: View {
             }
 
             // MARK: Apple Watch
+            //
+            // "Connected" means the watch is paired AND has the companion
+            // app installed — the only state that matters for this app's
+            // flow. `isWatchReachable` flips false whenever the Watch app
+            // isn't in the foreground, which made this row read "Not
+            // Connected" even for actively-paired watches.
             Section {
                 HStack {
                     Text("Watch Connected")
                     Spacer()
-                    Image(systemName: watchService.isWatchReachable ? "applewatch.radiowaves.left.and.right" : "applewatch.slash")
-                        .foregroundStyle(watchService.isWatchReachable ? .green : .secondary)
-                    Text(watchService.isWatchReachable ? "Yes" : "No")
+                    Image(systemName: watchService.isWatchAppInstalled
+                          ? "applewatch.radiowaves.left.and.right"
+                          : "applewatch.slash")
+                        .foregroundStyle(watchService.isWatchAppInstalled ? .green : .secondary)
+                    Text(watchService.isWatchAppInstalled ? "Yes" : "No")
                         .foregroundStyle(.secondary)
                 }
 
-                HStack {
-                    Text("Companion App")
-                    Spacer()
-                    Text(watchService.isWatchAppInstalled ? "Installed" : "Not Installed")
-                        .foregroundStyle(.secondary)
+                // Live-reachable is a stricter state (watch app currently
+                // running and in a state to receive messages). Show as a
+                // sub-status only when the watch IS paired.
+                if watchService.isWatchAppInstalled {
+                    HStack {
+                        Text("Live Session Ready")
+                        Spacer()
+                        Text(watchService.isWatchReachable ? "Yes" : "Open watch app to wake")
+                            .foregroundStyle(.secondary)
+                            .font(.caption)
+                    }
                 }
 
                 if let hr = watchService.liveHeartRate {

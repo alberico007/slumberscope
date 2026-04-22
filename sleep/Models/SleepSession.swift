@@ -88,11 +88,19 @@ struct SnoringEvent: Codable, Identifiable, Sendable {
     var duration: TimeInterval
     var averageAmplitude: Double
     var audioFileURL: URL?
-    /// Top label from SoundAnalysis classifier ("snoring", "mechanical_fan", etc.).
-    /// Empty string for legacy events recorded before classification was added.
+    /// Top label from the classifier — either the on-device SoundAnalysis
+    /// verdict ("snoring", "mechanical_fan", …) or, when the remote YAMNet
+    /// classifier is enabled, its collapsed label ("Snoring", "Other", …).
+    /// Empty string for legacy events.
     var classification: String = "snoring"
     /// Confidence (0.0–1.0) of the top classification label.
     var classificationConfidence: Double = 1.0
+    /// True while the remote classifier is still working on this event or
+    /// hasn't been able to reach the server yet.
+    var remoteClassificationPending: Bool = false
+    /// True once the remote classifier has given up after retries. The
+    /// local `classification` value is the one we fell back to.
+    var remoteClassificationFailed: Bool = false
 }
 
 // MARK: - SleepStageEntry
@@ -139,6 +147,11 @@ final class SleepSession {
     /// Minimum heart rate during the sleep window — usually the overnight
     /// low which is a strong recovery indicator.
     var minimumHeartRateBPM: Double?
+
+    /// JSON-encoded [Double] of downsampled (~40 point) HR samples from
+    /// the paired Apple Watch during this session. Used by the Watch
+    /// History detail view to draw a compact trend graph.
+    var watchHeartRateSamplesData: Data?
 
     /// Heart Rate Variability (SDNN, milliseconds). Apple Watch's HRV is
     /// within ~10 ms of clinical ECG per Apple's 2025 validation study.

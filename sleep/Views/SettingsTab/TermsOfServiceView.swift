@@ -39,7 +39,7 @@ struct TermsOfServiceView: View {
                     }
 
                     TermsSection(title: "2. Description of Service") {
-                        Text("Slumberscope is a sleep tracking application. It uses your device sensors to monitor sleep, detect snoring, and produce sleep quality insights. Optional features include Apple Music playback, in-app podcast playback, Apple HealthKit integration, and local weather display. Account data and sleep history are synced to Google Firebase so you can restore your history on a new device.")
+                        Text("Slumberscope is a sleep tracking application. It uses your iPhone's microphone and motion sensors to monitor sleep, detect and classify snoring, dog barking, cat meows, speech, and other ambient sound events, and produce sleep quality insights. Optional features include Apple Watch integration for heart rate, Apple Music playback, in-app podcast playback, Apple HealthKit integration, WeatherKit for the morning summary, Live Activity and Control Center widgets, AI-generated morning coaching notes, a Smart Alarm, and PDF and CSV export for sharing with a clinician. Account data, settings, and sleep history sync to Google Firebase so you can restore your history on a new device.")
                     }
 
                     TermsSection(title: "3. Medical Disclaimer") {
@@ -65,7 +65,6 @@ struct TermsOfServiceView: View {
                             TermsBullet("Use the App only for personal sleep tracking.")
                             TermsBullet("Place your device safely during tracking so it will not fall or overheat.")
                             TermsBullet("Keep the device charged during a tracking session.")
-                            TermsBullet("Not rely on the Smart Alarm as your only alarm for critical wake-ups. Always set a backup.")
                             TermsBullet("Provide accurate information when creating an account and keep your password confidential.")
                         }
                     }
@@ -82,7 +81,7 @@ struct TermsOfServiceView: View {
                     }
 
                     TermsSection(title: "6. Data and Privacy") {
-                        Text("Your use of the App is also governed by our Privacy Policy, which is incorporated by reference. Sensor data (motion, audio, heart rate when shared) is processed on your device. Account information, sleep sessions, and settings sync to Google Firebase for backup and multi-device restore.")
+                        Text("Your use of the App is also governed by our Privacy Policy, which is incorporated by reference. Raw sensor data (motion and audio) is processed on your device. Short audio clips of detected snoring or other classifier events are sent, over HTTPS with HMAC-signed requests, to our classification server for a more accurate label, then deleted from the server after the response is returned. Your account information, sleep sessions, profile photo, and settings sync to Google Firebase for backup and multi-device restore.")
                     }
 
                     TermsSection(title: "7. HealthKit") {
@@ -114,21 +113,39 @@ struct TermsOfServiceView: View {
                         }
                     }
 
-                    TermsSection(title: "10. Smart Alarm Disclaimer") {
+                    TermsSection(title: "10. Cloud Snoring Classifier") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Smart Alarm attempts to wake you during a light sleep phase.")
-                            TermsBullet("This feature is provided as a convenience and is not a guaranteed alarm.")
-                            TermsBullet("Trigger timing depends on sensor accuracy and environmental conditions.")
-                            TermsBullet("Always set a backup alarm for any critical wake-up.")
-                            TermsBullet("Slumberscope is not responsible for consequences of a missed or delayed alarm.")
+                            Text("To improve detection accuracy, Slumberscope sends short audio clips of candidate sound events to our hosted YAMNet classifier and to Apple's on-device SoundAnalysis pipeline.")
+                            TermsBullet("Each clip is roughly two seconds, captured only when an event is detected, and never a continuous stream of your bedroom audio.")
+                            TermsBullet("Requests are signed with a per-app HMAC key and transmitted over HTTPS.")
+                            TermsBullet("Clips are processed in memory by the classifier and discarded immediately. No copy is retained on the server.")
+                            TermsBullet("The on-device environmental filter that drops fans, AC, dogs, and speech runs locally and is always on.")
                         }
                     }
 
-                    TermsSection(title: "11. Intellectual Property") {
+                    TermsSection(title: "11. Profile Photo and PDF Export") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Profile photos are optional and used to identify you on PDF sleep reports.")
+                            TermsBullet("Photos are stored on your device, synced to your Firebase account, and embedded in any PDF report you generate.")
+                            TermsBullet("PDF and CSV exports are generated on your device and shared only by your action through the iOS share sheet.")
+                            TermsBullet("You can remove your photo at any time from Profile in Settings.")
+                        }
+                    }
+
+                    TermsSection(title: "12. Apple Watch") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Apple Watch integration is optional.")
+                            TermsBullet("If a paired Watch is reachable, Slumberscope reads heart rate samples through HealthKit during a sleep session and uses them to enrich your sleep score and morning summary.")
+                            TermsBullet("Sample data crosses devices through Apple's secure WatchConnectivity framework.")
+                            TermsBullet("If your Watch is not reachable, the iPhone alone runs the session.")
+                        }
+                    }
+
+                    TermsSection(title: "13. Intellectual Property") {
                         Text("All content, features, and functionality of Slumberscope, including the design, source code, algorithms, graphics, audio, and user interface, are owned by the developer and protected by copyright, trademark, and other intellectual property laws. You may not copy, modify, distribute, or reverse-engineer any part of the App without written permission.")
                     }
 
-                    TermsSection(title: "12. Sensor Accuracy") {
+                    TermsSection(title: "14. Sensor Accuracy") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Regarding measurement accuracy:")
                             TermsBullet("Results depend on device placement, sensor quality, and the environment.")
@@ -138,7 +155,7 @@ struct TermsOfServiceView: View {
                         }
                     }
 
-                    TermsSection(title: "13. Limitation of Liability") {
+                    TermsSection(title: "15. Limitation of Liability") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("TO THE MAXIMUM EXTENT PERMITTED BY LAW:")
                                 .fontWeight(.semibold)
@@ -149,7 +166,7 @@ struct TermsOfServiceView: View {
                         }
                     }
 
-                    TermsSection(title: "14. Third-Party Services") {
+                    TermsSection(title: "16. Third-Party Services") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("The App integrates with the following third-party services. Each has its own terms of service.")
                             TermsBullet("Google Firebase (Authentication, Firestore).")
@@ -159,19 +176,19 @@ struct TermsOfServiceView: View {
                         }
                     }
 
-                    TermsSection(title: "15. Modifications to Terms") {
+                    TermsSection(title: "17. Modifications to Terms") {
                         Text("We may modify these Terms. Material changes will be surfaced in the App and the \"Last updated\" date will be revised. Continued use after modifications constitutes acceptance of the updated Terms. If you disagree, stop using the App.")
                     }
 
-                    TermsSection(title: "16. Termination") {
+                    TermsSection(title: "18. Termination") {
                         Text("You may stop using the App at any time. You may also delete your account and associated cloud data from Settings > Profile > Delete Account & All Data. We may terminate or suspend access for violations of these Terms.")
                     }
 
-                    TermsSection(title: "17. Governing Law") {
+                    TermsSection(title: "20. Governing Law") {
                         Text("These Terms are governed by the laws of the United States and the state in which the developer resides, without regard to conflict of law principles. Disputes arising from these Terms will be resolved through binding arbitration where permitted by law.")
                     }
 
-                    TermsSection(title: "18. Apple's Role") {
+                    TermsSection(title: "21. Apple's Role") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("As required by Apple's App Store guidelines:")
                             TermsBullet("Apple is not a party to these Terms.")
@@ -181,7 +198,7 @@ struct TermsOfServiceView: View {
                         }
                     }
 
-                    TermsSection(title: "19. Contact") {
+                    TermsSection(title: "22. Contact") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Questions about these Terms:")
                             TermsBullet("Email: \(Self.supportEmail)")

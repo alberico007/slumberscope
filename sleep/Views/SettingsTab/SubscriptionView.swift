@@ -2,7 +2,6 @@
 //  SubscriptionView.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
 //
 
 import SwiftUI
@@ -65,7 +64,6 @@ struct SubscriptionView: View {
                             .font(.headline)
 
                         FeatureCompareRow(feature: "Sleep Tracking", free: true, premium: true)
-                        FeatureCompareRow(feature: "Smart Alarm (3 sounds)", free: true, premium: true)
                         FeatureCompareRow(feature: "7-Day Trends", free: true, premium: true)
                         FeatureCompareRow(feature: "Apple Health Sync", free: true, premium: true)
                         Divider()
