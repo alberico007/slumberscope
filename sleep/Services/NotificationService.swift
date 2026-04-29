@@ -2,7 +2,6 @@
 //  NotificationService.swift
 //  sleep
 //
-//
 
 import Foundation
 import os
@@ -42,7 +41,6 @@ final class NotificationService: NSObject {
         let center = UNUserNotificationCenter.current()
         let identifier = "com.sleep.bedtimeReminder"
 
-        // Always remove existing
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
 
         guard enabled else {
@@ -55,9 +53,6 @@ final class NotificationService: NSObject {
         let hour = components.hour ?? 22
         let minute = components.minute ?? 30
 
-        // Make sure we actually have permission. If the user denied earlier
-        // we silently couldn't schedule; now we prompt once and bail out if
-        // still not granted so the UI can reflect that.
         Task {
             let settings = await center.notificationSettings()
             if settings.authorizationStatus == .notDetermined {
@@ -125,9 +120,8 @@ final class NotificationService: NSObject {
         content.sound = .default
         content.categoryIdentifier = "WEEKLY_DIGEST"
 
-        // Sunday at 9:00 AM
         var dateComponents = DateComponents()
-        dateComponents.weekday = 1 // Sunday
+        dateComponents.weekday = 1
         dateComponents.hour = 9
         dateComponents.minute = 0
 
@@ -159,7 +153,6 @@ final class NotificationService: NSObject {
         let bedComponents = calendar.dateComponents([.hour, .minute], from: bedtime)
         guard let hour = bedComponents.hour, let minute = bedComponents.minute else { return }
 
-        // Calculate reminder time
         var reminderDate = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: Date()) ?? Date()
         reminderDate = reminderDate.addingTimeInterval(-Double(minutesBefore * 60))
         let reminderComponents = calendar.dateComponents([.hour, .minute], from: reminderDate)
@@ -218,14 +211,33 @@ final class NotificationService: NSObject {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
+    // MARK: - Smart Alarm
+
+    func sendAlarmFiredNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "⏰ Wake Up!"
+        content.body = "Your smart alarm detected a light sleep stage — now's the perfect time to wake up."
+        content.sound = .defaultCritical
+        content.categoryIdentifier = "SMART_ALARM"
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "com.sleep.smartAlarm.\(UUID().uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                AppLogger.notification.error("Failed to send alarm notification: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 // MARK: - UNUserNotificationCenterDelegate
 
 extension NotificationService: UNUserNotificationCenterDelegate {
 
-    /// Called when a notification fires while the app is in the foreground.
-    /// Without this, iOS silently swallows the notification (no banner, no sound).
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,

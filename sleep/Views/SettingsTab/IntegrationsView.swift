@@ -2,7 +2,6 @@
 //  IntegrationsView.swift
 //  sleep
 //
-//
 
 import SwiftUI
 
@@ -34,13 +33,6 @@ struct IntegrationsView: View {
                 Text("Sleep data, heart rate, HRV, and respiratory rate sync with Apple Health.")
             }
 
-            // MARK: Apple Watch
-            //
-            // "Connected" means the watch is paired AND has the companion
-            // app installed — the only state that matters for this app's
-            // flow. `isWatchReachable` flips false whenever the Watch app
-            // isn't in the foreground, which made this row read "Not
-            // Connected" even for actively-paired watches.
             Section {
                 HStack {
                     Text("Watch Connected")
@@ -53,9 +45,6 @@ struct IntegrationsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Live-reachable is a stricter state (watch app currently
-                // running and in a state to receive messages). Show as a
-                // sub-status only when the watch IS paired.
                 if watchService.isWatchAppInstalled {
                     HStack {
                         Text("Live Session Ready")
@@ -80,7 +69,6 @@ struct IntegrationsView: View {
                 Text("Apple Watch provides heart rate, HRV, respiratory rate, and haptic alarm during sleep.")
             }
 
-            // MARK: Siri & Shortcuts
             Section {
                 NavigationLink {
                     SiriManagementView()
@@ -101,7 +89,6 @@ struct IntegrationsView: View {
                 Label("Voice & Automation", systemImage: "wand.and.stars")
             }
 
-            // MARK: Sleep Focus
             Section {
                 HStack {
                     Text("Sleep Focus")
@@ -116,7 +103,6 @@ struct IntegrationsView: View {
                 Text("Automatically enables Sleep Focus when you start a tracking session.")
             }
 
-            // MARK: iCloud Backup
             Section {
                 Toggle("iCloud Backup", isOn: $settings.audioStorageCloud)
                 if settings.audioStorageCloud {
@@ -136,7 +122,6 @@ struct IntegrationsView: View {
                 Label("iCloud", systemImage: "icloud.fill")
             }
 
-            // MARK: Live Activities
             Section {
                 HStack {
                     Text("Lock Screen & Dynamic Island")
@@ -197,7 +182,6 @@ private struct SiriManagementView: View {
                 Link(destination: URL(string: "shortcuts://")!) {
                     Label("Open Shortcuts App", systemImage: "arrow.up.forward.app.fill")
                 }
-
                 Text("Create custom automations using the Shortcuts app, like \"Dim lights and start tracking.\"")
                     .font(.caption)
                     .foregroundStyle(.secondary)

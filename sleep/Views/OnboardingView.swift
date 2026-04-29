@@ -157,7 +157,7 @@ private struct SplashPage: View {
         ),
         (
             name: "Aia Ahmed",
-            role: "Computer Science",
+            role: "Software Engineering",
             initials: "AA",
             colors: [Color.purple, Color.pink],
             imageName: "Aia",
@@ -165,7 +165,7 @@ private struct SplashPage: View {
         ),
         (
             name: "Ananjin Batdelger",
-            role: "Software Engineering",
+            role: "Computer Science",
             initials: "AB",
             colors: [Color.green, Color.teal],
             imageName: "Ana",
@@ -1035,8 +1035,17 @@ private struct SignInPage: View {
         email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    private var isEmailValid: Bool {
+        let regex = "^[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+        return NSPredicate(format: "SELF MATCHES %@", regex)
+            .evaluate(with: normalizedEmail)
+    }
+
     private var canSubmit: Bool {
-        !normalizedEmail.isEmpty && !password.isEmpty && (!isSignUp || passwordMeetsRequirements)
+        !normalizedEmail.isEmpty &&
+        isEmailValid &&
+        !password.isEmpty &&
+        (!isSignUp || passwordMeetsRequirements)
     }
 
     private var isLockedOut: Bool {

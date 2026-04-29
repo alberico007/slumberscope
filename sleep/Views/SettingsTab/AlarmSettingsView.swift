@@ -8,12 +8,12 @@
 import SwiftUI
 
 struct AlarmSettingsView: View {
-
     @Environment(SleepSettings.self) private var settings
 
     var body: some View {
+        
         @Bindable var settings = settings
-
+        
         Form {
             Section("Smart Alarm") {
                 Toggle("Enable Smart Alarm", isOn: $settings.smartAlarmEnabled)
@@ -44,6 +44,7 @@ struct AlarmSettingsView: View {
                         Text("15 min").tag(15)
                         Text("30 min").tag(30)
                     }
+
                     Text("Alarm volume gradually increases over this duration.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -59,7 +60,7 @@ struct AlarmSettingsView: View {
                         Text(sound.rawValue)
                             .font(.subheadline)
                         Spacer()
-                        if sound == .gentle { // default selection indicator
+                        if sound == .gentle {
                             Image(systemName: "checkmark")
                                 .foregroundStyle(.orange)
                         }
@@ -69,6 +70,7 @@ struct AlarmSettingsView: View {
 
             Section("Auto-Stop") {
                 Toggle("Auto-Stop Tracking on Wake", isOn: $settings.autoStopTracking)
+                
                 Text("Automatically ends sleep tracking when significant movement is detected after your wake window.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

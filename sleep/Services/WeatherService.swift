@@ -2,7 +2,6 @@
 //  WeatherService.swift
 //  sleep
 //
-//
 
 import CoreLocation
 import Foundation
@@ -13,12 +12,12 @@ import WeatherKit
 // MARK: - WakeUpWeather
 
 struct WakeUpWeather {
-    let temperature: String        // e.g. "68°F"
-    let condition: String          // e.g. "Partly Cloudy"
-    let symbolName: String         // SF Symbol name
-    let feelsLike: String          // e.g. "Feels like 65°F"
-    let humidity: String           // e.g. "72%"
-    let cityName: String           // e.g. "San Francisco"
+    let temperature: String
+    let condition: String
+    let symbolName: String
+    let feelsLike: String
+    let humidity: String
+    let cityName: String
 }
 
 // MARK: - WeatherService
@@ -55,53 +54,50 @@ final class WeatherService: NSObject {
             let location = try await requestLocation()
             let raw = try await WeatherService.shared.weather(for: location)
 
-            // Reverse geocode for city name
-            let geocodeRequest = MKReverseGeocodingRequest(location: location)
-            let mapItem = try? await geocodeRequest?.mapItems.first
-            let city = mapItem?.address?.shortAddress ?? mapItem?.address?.fullAddress ?? "Your Location"
-
-            let formatter = MeasurementFormatter()
-            formatter.unitOptions = .providedUnit
-            formatter.numberFormatter.maximumFractionDigits = 0
+            // Reverse geocode off the main actor to satisfy Sendable checks
+            // Reverse geocode off the main actor to satisfy Sendable checks
+            let city = await Task.detached {
+                let request = MKReverseGeocodingRequest(location: location)
+                if let items = try? await request?.mapItems,
+                   let first = items.first {
+                    return first.address?.shortAddress ?? first.address?.fullAddress ?? "Your Location"
+                }
+                return "Your Location"
+            }.value
 
             let tempF = raw.currentWeather.temperature.converted(to: .fahrenheit)
             let feelsF = raw.currentWeather.apparentTemperature.converted(to: .fahrenheit)
             let humidity = raw.currentWeather.humidity
-
             let condition = raw.currentWeather.condition.description
+
             AppLogger.general.info("🌤️ Weather fetched: \(condition)")
 
-            await MainActor.run {
-                self.weather = WakeUpWeather(
-                    temperature: "\(Int(tempF.value.rounded()))°F",
-                    condition: condition,
-                    symbolName: raw.currentWeather.symbolName,
-                    feelsLike: "Feels like \(Int(feelsF.value.rounded()))°F",
-                    humidity: "\(Int((humidity * 100).rounded()))% humidity",
-                    cityName: city
-                )
-                self.isLoading = false
-            }
+            self.weather = WakeUpWeather(
+                temperature: "\(Int(tempF.value.rounded()))°F",
+                condition: condition,
+                symbolName: raw.currentWeather.symbolName,
+                feelsLike: "Feels like \(Int(feelsF.value.rounded()))°F",
+                humidity: "\(Int((humidity * 100).rounded()))% humidity",
+                cityName: city
+            )
+            self.isLoading = false
+
         } catch {
             AppLogger.general.error("Weather fetch failed: \(error.localizedDescription)")
-            await MainActor.run {
-                self.error = "Weather unavailable"
-                self.isLoading = false
-            }
+            self.error = "Weather unavailable"
+            self.isLoading = false
         }
     }
 
     // MARK: - Location
 
     private func requestLocation() async throws -> CLLocation {
-        // If we already have a fresh location, use it
         if let loc = currentLocation, Date().timeIntervalSince(loc.timestamp) < 3600 {
             return loc
         }
 
         return try await withCheckedThrowingContinuation { continuation in
             self.locationContinuation = continuation
-
             let status = locationManager.authorizationStatus
             if status == .notDetermined {
                 locationManager.requestWhenInUseAuthorization()

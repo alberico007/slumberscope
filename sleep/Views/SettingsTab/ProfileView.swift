@@ -2,7 +2,6 @@
 //  ProfileView.swift
 //  sleep
 //
-//
 
 import AuthenticationServices
 import FirebaseAuth
@@ -35,7 +34,6 @@ struct ProfileView: View {
         @Bindable var settings = settings
 
         Form {
-            // MARK: Profile Info
             Section {
                 HStack(spacing: 14) {
                     ProfilePhotoPicker(
@@ -72,9 +70,7 @@ struct ProfileView: View {
 
             Section {
                 TextField("Name", text: $settings.userName)
-
                 Stepper("Age: \(settings.userAge)", value: $settings.userAge, in: 13...120)
-
                 Picker("Gender", selection: $settings.userGender) {
                     ForEach(genderOptions, id: \.self) { option in
                         Text(option).tag(option)
@@ -90,16 +86,12 @@ struct ProfileView: View {
                         .font(.subheadline)
                     Slider(value: $settings.sleepGoalHours, in: 5...12, step: 0.5)
                         .tint(.green)
-
-                    let recommended = recommendedSleep(age: settings.userAge)
-                    Text("Recommended for your age: \(recommended)")
+                    Text("Recommended for your age: \(recommendedSleepLabel(forAge: settings.userAge))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            // MARK: Account (read-only info — sign-out lives at the very
-            // bottom of Settings, not here)
             Section("Account") {
                 if let user = firebaseUser {
                     HStack {
@@ -114,10 +106,6 @@ struct ProfileView: View {
                     } onCompletion: { result in
                         switch result {
                         case .success(let authorization):
-                            // Check whether Apple actually returned a name
-                            // right here, before handleAuthorization mutates
-                            // anything — if fullName is nil we know we'll
-                            // need to prompt the user ourselves.
                             let appleCred = authorization.credential as? ASAuthorizationAppleIDCredential
                             let appleGaveName = (appleCred?.fullName?.givenName?.isEmpty == false)
                                 || (appleCred?.fullName?.familyName?.isEmpty == false)
@@ -133,12 +121,6 @@ struct ProfileView: View {
                             }
                             firebaseUser = Auth.auth().currentUser
 
-                            // If Apple didn't hand us a name (every sign-in
-                            // after the first one), give Firestore ~1.5s to
-                            // restore from a prior save, and if it's still
-                            // blank then prompt the user directly. That's the
-                            // only way out of the dead-end where a first
-                            // sign-in happened without a name being saved.
                             if !appleGaveName {
                                 Task { @MainActor in
                                     try? await Task.sleep(for: .seconds(1.5))
@@ -158,7 +140,6 @@ struct ProfileView: View {
                 }
             }
 
-            // MARK: Danger Zone
             Section {
                 Button("Delete Account & All Data", role: .destructive) {
                     showingDeleteConfirmation = true
@@ -211,25 +192,15 @@ struct ProfileView: View {
 
     private func deleteEverything() {
         AppLogger.auth.info("User requested account & data deletion")
-
         authService.deleteFirebaseAccount()
         LocalDataCleanup.wipeUserData(modelContext: modelContext, settings: settings)
         authService.signOut()
         firebaseUser = nil
-
         AppLogger.auth.info("All data deleted and settings reset")
-    }
-
-    private func recommendedSleep(age: Int) -> String {
-        recommendedSleepLabel(forAge: age)
     }
 }
 
 // MARK: - NamePromptSheet
-//
-// Appears after Apple Sign-In if Apple didn't return a fullName (every sign-in
-// after the first, per Apple's design) and Firestore has no previously-saved
-// name to restore. Gives the user a direct way to enter it.
 
 private struct NamePromptSheet: View {
     @Binding var firstName: String

@@ -40,6 +40,7 @@ final class SleepTrackingService {
     let notificationService = NotificationService()
     let liveActivityService = LiveActivityService()
     let sleepFocusService = SleepFocusService()
+    let smartAlarmService = SmartAlarmService()
 
     // MARK: - Watch HR Stats
 

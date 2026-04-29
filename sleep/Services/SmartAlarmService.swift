@@ -2,8 +2,6 @@
 //  SmartAlarmService.swift
 //  sleep
 //
-//  Created by Michael Berinshteyn on 3/17/26.
-//
 
 import AudioToolbox
 import Foundation
@@ -26,7 +24,6 @@ enum AlarmSound: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var systemSoundID: UInt32 {
-        // Map to system sound IDs or custom audio files
         switch self {
         case .gentle: 1013
         case .sunrise: 1016
@@ -58,6 +55,7 @@ enum AlarmSound: String, CaseIterable, Identifiable {
 }
 
 @Observable
+@MainActor
 final class SmartAlarmService {
 
     // MARK: - Observable State
@@ -66,12 +64,8 @@ final class SmartAlarmService {
     var alarmTriggered = false
     var snoozedUntil: Date?
     var isGradualWakeActive = false
-    var gradualWakeProgress: Double = 0 // 0.0 to 1.0
+    var gradualWakeProgress: Double = 0
     var selectedSound: AlarmSound = .gentle
-
-    /// Human-readable reason for why the alarm fired when it did. Populated by
-    /// IntelligenceService when the alarm triggers, or a rule-based fallback.
-    /// Shown on SmartAlarmOverlay below the title.
     var latestRationale: String?
 
     // MARK: - Private
@@ -101,21 +95,14 @@ final class SmartAlarmService {
         snoozedUntil = nil
         AppLogger.alarm.info("⏰ Smart alarm monitoring started — target: \(String(describing: self.alarmTime)), window: \(self.windowMinutes)m")
 
-        monitoringTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self, weak healthKitService] _ in
+        monitoringTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 guard !self.alarmTriggered else { return }
 
-                // Check snooze
-                if let snoozed = self.snoozedUntil, Date() < snoozed {
-                    return
-                }
-
+                if let snoozed = self.snoozedUntil, Date() < snoozed { return }
                 guard self.isInAlarmWindow() else { return }
 
-                // Prefer Apple Watch stage data when the user is wearing one.
-                // If the last 2-minute window has any Core/REM/Awake sample,
-                // that's the cleanest possible light-sleep signal.
                 if let hk = healthKitService {
                     let recentStart = Date().addingTimeInterval(-120)
                     let recentStages = await hk.fetchAppleWatchStages(from: recentStart, to: Date())
@@ -124,33 +111,24 @@ final class SmartAlarmService {
                     case .light, .awake, .rem:
                         AppLogger.alarm.info("⏰ Triggering — Apple Watch reports \(latest!.stage.rawValue) stage")
                         let minsEarly = self.minutesEarlyVsLatest()
-                        await self.computeAndStoreRationale(
-                            stage: latest!.stage.rawValue,
-                            minsEarly: minsEarly,
-                            intelligenceService: intelligenceService
-                        )
+                        self.storeRationale(stage: latest!.stage.rawValue, minsEarly: minsEarly)
                         self.triggerAlarm()
-                        notificationService.sendAlarmNotification()
+                        notificationService.sendAlarmFiredNotification()
                         return
                     case .deep:
                         AppLogger.alarm.debug("⏰ Holding — Watch reports deep sleep")
                         return
                     default:
-                        break // no Watch data yet — fall through to motion
+                        break
                     }
                 }
 
-                // Fallback: iPhone motion intensity as light-sleep proxy.
                 if motionService.currentIntensity > 0.08 {
                     AppLogger.alarm.info("⏰ Triggering — motion intensity \(motionService.currentIntensity)")
                     let minsEarly = self.minutesEarlyVsLatest()
-                    await self.computeAndStoreRationale(
-                        stage: "light",
-                        minsEarly: minsEarly,
-                        intelligenceService: intelligenceService
-                    )
+                    self.storeRationale(stage: "light", minsEarly: minsEarly)
                     self.triggerAlarm()
-                    notificationService.sendAlarmNotification()
+                    notificationService.sendAlarmFiredNotification()
                 } else {
                     AppLogger.alarm.debug("⏰ Holding — motion \(motionService.currentIntensity) below threshold")
                 }
@@ -165,11 +143,9 @@ final class SmartAlarmService {
         alarmTriggered = true
         AppLogger.alarm.info("⏰ Smart alarm triggered!")
 
-        // Play alert sound and vibrate
         AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
-        AudioServicesPlayAlertSound(1005) // System alert sound
+        AudioServicesPlayAlertSound(1005)
 
-        // Repeat every 3 seconds
         alarmRepeatTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self = self, self.alarmTriggered else { return }
@@ -203,7 +179,7 @@ final class SmartAlarmService {
     func startGradualWake(durationMinutes: Int) {
         isGradualWakeActive = true
         gradualWakeProgress = 0
-        let totalSteps = durationMinutes * 60 / 5 // update every 5 seconds
+        let totalSteps = durationMinutes * 60 / 5
         var step = 0
 
         gradualWakeTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -212,8 +188,7 @@ final class SmartAlarmService {
                 step += 1
                 self.gradualWakeProgress = min(Double(step) / Double(max(totalSteps, 1)), 1.0)
 
-                // Increase alarm volume gradually
-                if step % 12 == 0 { // Every minute, play a quiet sound
+                if step % 12 == 0 {
                     AudioServicesPlaySystemSound(SystemSoundID(self.selectedSound.systemSoundID))
                 }
 
@@ -221,7 +196,6 @@ final class SmartAlarmService {
                     self.gradualWakeTimer?.invalidate()
                     self.gradualWakeTimer = nil
                     self.isGradualWakeActive = false
-                    // Full alarm now
                     self.triggerFullAlarm()
                 }
             }
@@ -241,13 +215,9 @@ final class SmartAlarmService {
         gradualWakeProgress = 0
     }
 
-    // MARK: - Continue Sleeping
-
     func continueSleeping() {
         alarmTriggered = false
         stopGradualWake()
-        // Reset monitoring to detect next light sleep
-        // The tracking continues
     }
 
     // MARK: - Stop Monitoring
@@ -276,36 +246,25 @@ final class SmartAlarmService {
         return max(0, Int(latest.timeIntervalSince(now) / 60))
     }
 
-    private func computeAndStoreRationale(stage: String, minsEarly: Int, intelligenceService: IntelligenceService?) async {
-        if let intelligenceService {
-            if let ai = await intelligenceService.generateAlarmRationale(stage: stage, minutesEarlyVsLatest: minsEarly) {
-                await MainActor.run { self.latestRationale = ai }
-                AppLogger.alarm.info("⏰ AI rationale: \(ai)")
-                return
-            }
-        }
+    private func storeRationale(stage: String, minsEarly: Int) {
         let fallback = minsEarly <= 0
             ? "Woke you at your latest alarm — you hadn't hit a light stage yet."
             : "Woke you \(minsEarly) min early during a \(stage) stage for an easier wake-up."
-        await MainActor.run { self.latestRationale = fallback }
+        self.latestRationale = fallback
         AppLogger.alarm.info("⏰ Rationale: \(fallback)")
     }
 
-    // MARK: - Private
+    // MARK: - Window Check
 
     private func isInAlarmWindow() -> Bool {
         guard let alarmTime = alarmTime else { return false }
-
         let calendar = Calendar.current
         let now = Date()
-
-        // Extract hour/minute from alarm time and apply to today
         let alarmComponents = calendar.dateComponents([.hour, .minute], from: alarmTime)
         guard let todayAlarm = calendar.date(bySettingHour: alarmComponents.hour ?? 7,
                                               minute: alarmComponents.minute ?? 0,
                                               second: 0,
                                               of: now) else { return false }
-
         let windowStart = todayAlarm.addingTimeInterval(TimeInterval(-windowMinutes * 60))
         return now >= windowStart && now <= todayAlarm
     }

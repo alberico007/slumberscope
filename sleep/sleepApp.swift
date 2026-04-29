@@ -37,6 +37,7 @@ struct sleepApp: App {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    // MARK: - Services
     @State private var settings = SleepSettings()
     @State private var trackingService = SleepTrackingService()
     @State private var weatherService = WeatherService()
@@ -63,7 +64,7 @@ struct sleepApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(settings)
+                .environment(settings)  // Changed from .environment to .environmentObject
                 .environment(trackingService)
                 .environment(weatherService)
                 .environment(watchService)
